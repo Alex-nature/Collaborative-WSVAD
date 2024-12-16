@@ -1,1 +1,3 @@
-# Fed-WSVAD
+# Federated Weakly Supervised Video Anomaly Detection with Multimodal Prompt
+
+The code will coming soon...
