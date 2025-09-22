@@ -4,7 +4,8 @@ import torch
 import numpy as np
 from fed.client import FedAvgClient
 from inference import inference
-W
+
+
 class BaseServer:
     def __init__(self,
                  dataset: str,
@@ -42,7 +43,8 @@ class FedAvgServer(BaseServer):
                  device,
                  model
                  ):
-        super().__init__(dataset, train_loaders, test_loader, clients_num, global_rounds, local_epochs, model)
+        super().__init__(dataset, train_loaders, test_loader,
+                         clients_num, global_rounds, local_epochs, model)
         self.dataset = dataset
         self.train_loaders = train_loaders
         self.test_loader = test_loader
@@ -101,7 +103,8 @@ class FedAvgServer(BaseServer):
         else:
             gt = np.load("./data/gt_xd.npy")
 
-        roc, ap = inference(self.dataset, self.model, self.test_loader, gt, self.device)
+        roc, ap = inference(self.dataset, self.model,
+                            self.test_loader, gt, self.device)
         print(f"round {r + 1} : roc: {roc} , ap: {ap}")
         res_dict = {
             'ucf': roc,
@@ -121,7 +124,8 @@ class FedAvgServer(BaseServer):
         }
         for index in range(len(self.local_weights)):
             self.set_global_parameter(self.local_weights[index])
-            roc, ap = inference(self.dataset, self.model, self.test_loader, gt, self.device)
+            roc, ap = inference(self.dataset, self.model,
+                                self.test_loader, gt, self.device)
             res_dict['ucf'].append(roc)
             res_dict['xd'].append(ap)
 
@@ -130,7 +134,7 @@ class FedAvgServer(BaseServer):
 
     def train(self, dir_name):
         for g in range(self.global_rounds):
-            print(f"-------- round: {g + 1} / {self.global_rounds} --------")
+            print(f"\n-------- round: {g + 1} / {self.global_rounds} --------")
             self.local_weights.clear()
             self.local_losses.clear()
             self.len_dataset.clear()
@@ -145,20 +149,31 @@ class FedAvgServer(BaseServer):
                 self.local_losses.append(loss)
                 self.len_dataset.append(l_data)
                 client.scheduler.step()
+                print()  # 每个客户端训练完成后添加空行
 
             self.global_parameter = self.aggregate_parameters()
             self.set_global_parameter(self.global_parameter)
             res = self.evaluate(g)
 
             self.send_global_parameter(self.global_parameter)
-            if res[self.dataset] > self.best:
-                self.best = res[self.dataset]
+            metric_name = 'roc' if self.dataset == 'ucf' else 'ap'
+            current_metric = res[self.dataset]
+
+            if current_metric > self.best:
+                self.best = current_metric
                 self.best_model = self.global_parameter
+                model_path = f"{dir_name}/model_{metric_name}_{current_metric:.4f}.pth"
+                torch.save(self.model.state_dict(), model_path)
+                print(f"\n模型已保存到: {model_path}")
+                print(f"当前最佳{metric_name.upper()}: {self.best:.4f}")
 
-                torch.save(self.model.state_dict(), dir_name + "/model.pth")
+            print(f"\n当前轮次{metric_name.upper()}: {current_metric:.4f}")
+            print(f"历史最佳{metric_name.upper()}: {self.best:.4f}")
+            print("\n" + "="*50)  # 添加分隔线
 
-            print(f"best: {self.best}")
-
+        print("\n训练完成！")
+        final_model_path = f"{dir_name}/model_final_{metric_name}_{self.best:.4f}.pth"
         self.set_global_parameter(self.best_model)
-        torch.save(self.model.state_dict(), dir_name + "/model.pth")
-
+        torch.save(self.model.state_dict(), final_model_path)
+        print(f"最终模型已保存到: {final_model_path}")
+        print(f"最终{metric_name.upper()}: {self.best:.4f}")

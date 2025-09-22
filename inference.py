@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -71,6 +70,7 @@ def inference(dataset, model, test_loader, gt, device):
     return ROC2, AP2
 
 
+
 if __name__ == "__main__":
     args = config.parser.parse_args()
 
@@ -86,12 +86,18 @@ if __name__ == "__main__":
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     model = Model(args.embed_dim, args.visual_length, args.prompt_prefix,
-                  args.prompt_postfix, args.visual_width, args.visual_layers,
-                  args.visual_head, args.attn_window, device).to(device)
+                  args.prompt_postfix, args.visual_width,
+                  args.visual_head, args.local_layers,
+                  args.global_layers, args.window_size,
+                  args.transformer_dropout, device).to(device)
 
     checkpoint = torch.load(args.checkpoint, map_location='cuda:0')
 
-    model.load_state_dict(checkpoint)
+    # ！！！# If the checkpoint contains a 'model_state_dict' key, use it; otherwise, use the entire checkpoint
+    if 'model_state_dict' in checkpoint:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        model.load_state_dict(checkpoint)
 
     roc, ap = 0, 0
     if args.dataset == 'ucf':

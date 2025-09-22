@@ -1,1 +1,3 @@
 data/VadCLIP-data
+*.pyc
+__pycache__/

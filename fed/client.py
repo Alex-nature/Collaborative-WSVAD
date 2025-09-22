@@ -3,6 +3,9 @@ from collections import OrderedDict
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 from utils.tools import get_batch_label, get_prompt_text, CLASM
+from tqdm import tqdm
+import os
+
 
 class FedAvgClient:
     def __init__(self,
@@ -24,8 +27,10 @@ class FedAvgClient:
         self.local_epochs = local_epochs
         self.label_map = label_map
         self.device = device
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.learning_rate)
-        self.scheduler = MultiStepLR(self.optimizer, scheduler_milestones, scheduler_rate)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(), lr=self.learning_rate)
+        self.scheduler = MultiStepLR(
+            self.optimizer, scheduler_milestones, scheduler_rate)
 
     def set_parameters(self, new_params):
         state_dict = self.model.state_dict()
@@ -44,9 +49,10 @@ class FedAvgClient:
     def train(self):
         self.model.train()
         prompt_text = get_prompt_text(self.label_map)
+        # 获取终端宽度
+        term_width = os.get_terminal_size().columns
 
         if self.dataset == 'ucf':
-
             loss_total2 = 0
 
             for epoch in range(self.local_epochs):
@@ -54,19 +60,28 @@ class FedAvgClient:
                 anomaly_iter = iter(self.train_loaders[1])
 
                 loss_per_epoch2 = 0
-
                 iters = 0
+                total_iters = min(
+                    len(self.train_loaders[0]), len(self.train_loaders[1]))
 
-                for i in range(min(len(self.train_loaders[0]), len(self.train_loaders[1]))):
+                pbar = tqdm(range(total_iters),
+                            desc=f'Epoch {epoch+1}/{self.local_epochs}'.ljust(
+                                15),
+                            bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
+                            ncols=term_width)
+                for i in pbar:
+                    normal_features, normal_label, normal_lengths = next(
+                        normal_iter)
+                    anomaly_features, anomaly_label, anomaly_lengths = next(
+                        anomaly_iter)
 
-                    normal_features, normal_label, normal_lengths = next(normal_iter)
-                    anomaly_features, anomaly_label, anomaly_lengths = next(anomaly_iter)
-
-                    visual_features = torch.cat([normal_features, anomaly_features], dim=0).to(self.device)
+                    visual_features = torch.cat(
+                        [normal_features, anomaly_features], dim=0).to(self.device)
 
                     text_labels = list(normal_label) + list(anomaly_label)
 
-                    feat_lengths = torch.cat([normal_lengths, anomaly_lengths], dim=0).to(self.device)
+                    feat_lengths = torch.cat(
+                        [normal_lengths, anomaly_lengths], dim=0).to(self.device)
 
                     text_labels = get_batch_label(text_labels, prompt_text, self.label_map, self.dataset).to(
                         self.device)
@@ -74,7 +89,8 @@ class FedAvgClient:
                                         prompt_text,
                                         feat_lengths)
 
-                    loss2 = CLASM(logits, text_labels, feat_lengths, self.device)
+                    loss2 = CLASM(logits, text_labels,
+                                  feat_lengths, self.device)
                     loss_per_epoch2 += loss2.item()
 
                     loss = loss2
@@ -84,22 +100,27 @@ class FedAvgClient:
                     self.optimizer.step()
 
                     iters += 1
+                    pbar.set_postfix({'loss': f'{loss2.item():.4f}'})
+
                 loss_total2 += loss_per_epoch2 / iters
 
             return (self.get_global_parameters(), loss_total2,
                     len(self.train_loaders[0]) + len(self.train_loaders[1]))
 
         elif self.dataset == 'xd':
-
             loss_total2 = 0
 
             for epoch in range(self.local_epochs):
-
                 loss_per_epoch2 = 0
                 iters = 0
 
-                for i, item in enumerate(self.train_loaders):
-
+                pbar = tqdm(enumerate(self.train_loaders),
+                            desc=f'Epoch {epoch+1}/{self.local_epochs}'.ljust(
+                                15),
+                            bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
+                            total=len(self.train_loaders),
+                            ncols=term_width)
+                for i, item in pbar:
                     visual_feat, text_labels, feat_lengths = item
                     visual_feat = visual_feat.to(self.device)
                     feat_lengths = feat_lengths.to(self.device)
@@ -111,7 +132,8 @@ class FedAvgClient:
                                         prompt_text,
                                         feat_lengths)
 
-                    loss2 = CLASM(logits, text_labels, feat_lengths, self.device)
+                    loss2 = CLASM(logits, text_labels,
+                                  feat_lengths, self.device)
                     loss_per_epoch2 += loss2.item()
 
                     loss = loss2
@@ -121,9 +143,9 @@ class FedAvgClient:
                     self.optimizer.step()
 
                     iters += 1
+                    pbar.set_postfix({'loss': f'{loss2.item():.4f}'})
 
                 loss_total2 += loss_per_epoch2 / iters
 
             return (self.get_global_parameters(), loss_total2,
                     len(self.train_loaders))
-

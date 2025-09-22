@@ -7,7 +7,7 @@ import torch
 import torch.utils.data as data
 from torch.utils.data import DataLoader
 
-# sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.dirname(__file__))
 from utils.tools import process_feat, process_split
 
 
@@ -17,6 +17,10 @@ class UCFDataset(data.Dataset):
         self.clip_dim = clip_dim
         self.test_mode = test_mode
         self.normal = normal
+
+        # 添加数据目录的基础路径
+        self.base_path = './data'
+
         if normal == True and test_mode == False:
             self.df = self.df.loc[self.df['label'] == 'Normal']
             self.df = self.df.reset_index()
@@ -29,7 +33,13 @@ class UCFDataset(data.Dataset):
         return self.df.shape[0]
 
     def __getitem__(self, index):
-        clip_feature = np.load(self.df.loc[index]['path'])
+        original_path = self.df.loc[index]['path']
+        # 将原始路径中的 /data 替换为 self.base_path
+        feature_path = original_path.replace('/data', self.base_path)
+        clip_feature = np.load(feature_path)
+
+        # clip_feature = np.load(self.df.loc[index]['path'])
+        
         if self.test_mode == False:
             clip_feature, clip_length = process_feat(clip_feature, self.clip_dim)
         else:
@@ -45,12 +55,20 @@ class XDDataset(data.Dataset):
         self.df = pd.read_csv(file_path)
         self.clip_dim = clip_dim
         self.test_mode = test_mode
+        # 添加数据目录的基础路径
+        self.base_path = './data'
 
     def __len__(self):
         return self.df.shape[0]
 
     def __getitem__(self, index):
-        clip_feature = np.load(self.df.loc[index]['path'])
+        original_path = self.df.loc[index]['path']
+        # 将原始路径中的 /data 替换为 self.base_path
+        feature_path = original_path.replace('/data', self.base_path)
+        clip_feature = np.load(feature_path)
+
+        # clip_feature = np.load(self.df.loc[index]['path'])
+        
         if not self.test_mode:
             clip_feature, clip_length = process_feat(clip_feature, self.clip_dim)
         else:

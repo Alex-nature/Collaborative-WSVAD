@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 from utils.clip import clip
 from utils.prompt_net import PromptLearner
-
+from utils.hierarchical_transformer import HierarchicalTransformer
 
 class LayerNorm(nn.LayerNorm):
     def forward(self, x: torch.Tensor):
@@ -45,7 +45,6 @@ class ResidualAttentionBlock(nn.Module):
         return x
 
 
-# transformer encoder
 class TransformerEncoder(nn.Module):
     def __init__(self, width: int, layers: int, heads: int, dropout: float = 0, attn_mask: torch.Tensor = None, ):
         super(TransformerEncoder, self).__init__()
@@ -59,37 +58,50 @@ class TransformerEncoder(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self,
+    def __init__(
+        self,
                  embed_dim: int,
                  visual_length: int,
                  prompt_prefix: int,
                  prompt_postfix: int,
                  visual_width: int,
-                 visual_layers: int,
                  visual_head: int,
-                 attn_window: int,
-                 device):
+                 local_layers: int,
+                 global_layers: int,
+                 window_size: int,
+                 transformer_dropout: float,
+                 device: str):
         super().__init__()
 
+        # 保存基本参数
         self.visual_length = visual_length
         self.embed_dim = embed_dim
         self.prompt_prefix = prompt_prefix
         self.prompt_postfix = prompt_postfix
-        self.attn_window = attn_window
         self.device = device
+        
 
+        # 加载CLIP模型
         self.clipmodel, _ = clip.load("ViT-B/16", device)
         for clip_param in self.clipmodel.parameters():
             clip_param.requires_grad = False
-
-        self.temporal = TransformerEncoder(
+        
+        # 初始化视觉编码器
+        self.temporal = HierarchicalTransformer(
             width=visual_width,
-            layers=visual_layers,
+            local_layers=local_layers,
+            global_layers=global_layers,
             heads=visual_head,
+            window_size=window_size,
+            dropout=transformer_dropout,
+            use_local_residual=False,
+            use_global_residual=False
         )
-
+        
+        # 初始化提示学习器
         self.prompt_learner = PromptLearner()
 
+        # 初始化其他组件
         self.frame_position_embeddings = nn.Embedding(visual_length, visual_width)
         self.global_text_prompt_embeddings = nn.Embedding(77, self.embed_dim)
         self.dtype = self.clipmodel.dtype
@@ -120,6 +132,7 @@ class Model(nn.Module):
         return embedding, tokenized_prompts
 
     def encode_text_prompt(self, text, visual):
+        """生成动态文本特征"""
         classes = [name.replace("_", " ") for name in text]
         class_tokens = torch.cat([clip.tokenize(p) for p in classes])
         class_tokens = class_tokens.to(self.device)
@@ -128,6 +141,7 @@ class Model(nn.Module):
             class_features = class_features / class_features.norm(dim=-1, keepdim=True)
 
         context_embedding = class_features
+
         prompt_vectors, tokenized_prompts = self.get_tokenized_classnames(classes)
 
         context = self.prompt_learner(context_embedding, visual)
@@ -140,21 +154,27 @@ class Model(nn.Module):
             dim=1,
         )
 
+        # 生成动态文本特征
         text_features = self.clipmodel.encode_text(prompt_vectors, tokenized_prompts)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        
         return text_features
 
-    def forward(self, visual, text, lengths):
+    def forward(self, visual, text, lengths, is_training=True):
+        # 1. 获取视觉特征
         visual_features = self.encode_video(visual)
-        text_features = self.encode_text_prompt(text, visual_features)
-
-        text_features = text_features.unsqueeze(0)
-        text_features = text_features.expand(
-            visual_features.shape[0], text_features.shape[1], text_features.shape[2])
-
         visual_features_norm = visual_features / visual_features.norm(dim=-1, keepdim=True)
-        text_features_norm = text_features / text_features.norm(dim=-1, keepdim=True)
-        text_features_norm = text_features_norm.permute(0, 2, 1)
-
-        logits = visual_features_norm @ text_features_norm.type(visual_features_norm.dtype)
+        
+        # 2. 获取文本特征
+        text_features = self.encode_text_prompt(text, visual_features)
+        
+        # 3. 扩展维度以匹配批次大小
+        text_features = text_features.unsqueeze(0).expand(
+            visual_features.shape[0], text_features.shape[0], text_features.shape[1])
+        text_features = text_features.permute(0, 2, 1)
+        
+        # 4. 计算logits
+        logits = visual_features_norm @ text_features.type(visual_features_norm.dtype)
         logits = logits * self.clipmodel.logit_scale.exp()
+        
         return logits

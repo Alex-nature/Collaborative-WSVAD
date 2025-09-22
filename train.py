@@ -27,7 +27,8 @@ if __name__ == "__main__":
     dir_name = start_time.strftime("%Y-%m-%d-%H:%M:%S")
     dir_name = args.dataset + "-" + dir_name
     path = os.path.join('save', dir_name)
-    os.mkdir(path)
+    os.makedirs(path, exist_ok=True)
+    # os.mkdir(path, exis)(源码这步运行有问题？)
 
     with open(os.path.join(path, 'README.txt'), 'w') as f:
         for key, value in args.__dict__.items():
@@ -43,9 +44,10 @@ if __name__ == "__main__":
         train_loaders, test_loader = make_ucf_dataloader(
             args.split_mode, args.clients_num, args.batch_size, args.visual_length)
 
-    model = Model(args.embed_dim, args.visual_length, args.prompt_prefix,
-                  args.prompt_postfix, args.visual_width, args.visual_layers,
-                  args.visual_head, args.attn_window, device).to(device)
+    model = Model(args.embed_dim, args.visual_length, args.prompt_prefix, args.prompt_postfix, args.visual_width,
+                  args.visual_head, args.local_layers,
+                  args.global_layers, args.window_size,
+                  args.transformer_dropout, device).to(device)
 
     if args.load_model == 1:
         checkpoint = torch.load(args.checkpoint)
@@ -58,4 +60,3 @@ if __name__ == "__main__":
                               args.split_mode, args.scheduler_milestones, args.scheduler_rate,
                               device, model)
         server.train(path)
-
