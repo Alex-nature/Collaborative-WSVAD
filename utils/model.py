@@ -66,10 +66,12 @@ class Model(nn.Module):
                  prompt_postfix: int,
                  visual_width: int,
                  visual_head: int,
+                 visual_layers: int,
                  local_layers: int,
                  global_layers: int,
                  window_size: int,
                  transformer_dropout: float,
+                 temporal_type: str,
                  device: str):
         super().__init__()
 
@@ -87,15 +89,22 @@ class Model(nn.Module):
             clip_param.requires_grad = False
         
         # 初始化视觉编码器
-        self.temporal = HierarchicalTransformer(
+        if temporal_type == 'hierarchical':
+            self.temporal = HierarchicalTransformer(
+                width=visual_width,
+                local_layers=local_layers,
+                global_layers=global_layers,
+                heads=visual_head,
+                window_size=window_size,
+                dropout=transformer_dropout,
+                use_local_residual=False,
+                use_global_residual=False
+            )
+        else:  # temporal_type == 'standard'
+            self.temporal = TransformerEncoder(
             width=visual_width,
-            local_layers=local_layers,
-            global_layers=global_layers,
+            layers=visual_layers,
             heads=visual_head,
-            window_size=window_size,
-            dropout=transformer_dropout,
-            use_local_residual=False,
-            use_global_residual=False
         )
         
         # 初始化提示学习器

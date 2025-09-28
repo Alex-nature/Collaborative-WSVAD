@@ -1,5 +1,6 @@
 import os
 import random
+from re import A
 import numpy as np
 import torch
 import utils.config as config
@@ -24,8 +25,9 @@ if __name__ == "__main__":
     device = f"cuda:{args.cuda}" if torch.cuda.is_available() else "cpu"
 
     start_time = datetime.now()
-    dir_name = start_time.strftime("%Y-%m-%d-%H:%M:%S")
-    dir_name = args.dataset + "-" + dir_name
+    # 修改时间格式，将冒号替换为横杠（windows版本）
+    dir_name = start_time.strftime("%Y-%m-%d-%H-%M-%S")
+    dir_name = f"{args.dataset}-{args.split_mode}-{dir_name}"
     path = os.path.join('save', dir_name)
     os.makedirs(path, exist_ok=True)
     # os.mkdir(path, exis)(源码这步运行有问题？)
@@ -44,10 +46,10 @@ if __name__ == "__main__":
         train_loaders, test_loader = make_ucf_dataloader(
             args.split_mode, args.clients_num, args.batch_size, args.visual_length)
 
-    model = Model(args.embed_dim, args.visual_length, args.prompt_prefix, args.prompt_postfix, args.visual_width,
-                  args.visual_head, args.local_layers,
-                  args.global_layers, args.window_size,
-                  args.transformer_dropout, device).to(device)
+    model = Model(args.embed_dim, args.visual_length, args.prompt_prefix, args.prompt_postfix, 
+                  args.visual_width, args.visual_head, args.visual_layers, 
+                  args.local_layers, args.global_layers, args.window_size, args.transformer_dropout, 
+                  args.temporal_type, device).to(device)
 
     if args.load_model == 1:
         checkpoint = torch.load(args.checkpoint)
