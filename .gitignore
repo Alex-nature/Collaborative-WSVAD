@@ -2,4 +2,4 @@ data/VadCLIP-data
 *.pyc
 __pycache__/*.pth
 *.pth
-*.pth
+save/
