@@ -3,3 +3,4 @@ data/VadCLIP-data
 __pycache__/*.pth
 *.pth
 save/
+experiments/
