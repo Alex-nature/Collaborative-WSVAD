@@ -20,4 +20,5 @@ tqdm>=4.50.0          # 进度条显示
 colorlog>=4.7.2       # 彩色日志输出
 
 # 工具库
-python-dateutil>=2.8.2  # 日期时间处理 
+python-dateutil>=2.8.2  # 日期时间处理
+psutil>=5.8.0          # 进程和系统监控 
