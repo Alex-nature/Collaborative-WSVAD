@@ -7,6 +7,7 @@ from torch import nn
 from utils.clip import clip
 from utils.prompt_net import PromptLearner
 from utils.hierarchical_transformer import HierarchicalTransformer
+from utils.adaptive_temporal import AdaptiveConvGCNTemporal
 
 class LayerNorm(nn.LayerNorm):
     def forward(self, x: torch.Tensor):
@@ -72,7 +73,14 @@ class Model(nn.Module):
                  window_size: int,
                  transformer_dropout: float,
                  temporal_type: str,
-                 device: str):
+                 device: str,
+                 # Adaptive Conv+GCN parameters
+                 tcn_out_dim: int = None,
+                 gcn_layers: int = 2,
+                 min_window: int = 2,
+                 max_window: int = 16,
+                 use_feature_sim: bool = True,
+                 weight_hidden_dim: int = 128):
         super().__init__()
 
         # 保存基本参数
@@ -99,6 +107,18 @@ class Model(nn.Module):
                 dropout=transformer_dropout,
                 use_local_residual=False,
                 use_global_residual=False
+            )
+        elif temporal_type == 'adaptive_conv_gcn':
+            # 自适应卷积+图卷积时序建模
+            self.temporal = AdaptiveConvGCNTemporal(
+                width=visual_width,
+                tcn_out_dim=tcn_out_dim,
+                gcn_layers=gcn_layers,
+                min_window=min_window,
+                max_window=max_window,
+                dropout=transformer_dropout,
+                use_feature_sim=use_feature_sim,
+                weight_hidden_dim=weight_hidden_dim
             )
         else:  # temporal_type == 'standard'
             self.temporal = TransformerEncoder(

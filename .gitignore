@@ -1,0 +1,8 @@
+data/VadCLIP-data
+*.pyc
+__pycache__/*.pth
+*.pth
+save/
+experiments/
+md/
+pdf/
