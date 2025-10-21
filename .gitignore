@@ -4,3 +4,5 @@ __pycache__/*.pth
 *.pth
 save/
 experiments/
+md/
+pdf/

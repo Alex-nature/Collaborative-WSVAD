@@ -177,3 +177,6 @@ class FedAvgServer(BaseServer):
         torch.save(self.model.state_dict(), final_model_path)
         print(f"最终模型已保存到: {final_model_path}")
         print(f"最终{metric_name.upper()}: {self.best:.4f}")
+        
+        # 返回最佳评估指标
+        return self.best

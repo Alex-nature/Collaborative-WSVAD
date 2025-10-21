@@ -49,8 +49,6 @@ class FedAvgClient:
     def train(self):
         self.model.train()
         prompt_text = get_prompt_text(self.label_map)
-        # 获取终端宽度
-        term_width = os.get_terminal_size().columns
 
         if self.dataset == 'ucf':
             loss_total2 = 0
@@ -64,11 +62,17 @@ class FedAvgClient:
                 total_iters = min(
                     len(self.train_loaders[0]), len(self.train_loaders[1]))
 
+                # 获取终端宽度，添加异常处理
+                try:
+                    term_width = os.get_terminal_size().columns
+                except (OSError, IOError):
+                    term_width = 80  # 使用默认宽度
+
                 pbar = tqdm(range(total_iters),
-                            desc=f'Epoch {epoch+1}/{self.local_epochs}'.ljust(
-                                15),
-                            bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
-                            ncols=term_width)
+                          desc=f'Epoch {epoch+1}/{self.local_epochs}',
+                          total=total_iters,  # 明确设置total
+                          bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
+                          ncols=term_width)
                 for i in pbar:
                     normal_features, normal_label, normal_lengths = next(
                         normal_iter)
@@ -114,12 +118,21 @@ class FedAvgClient:
                 loss_per_epoch2 = 0
                 iters = 0
 
+                # 获取终端宽度，添加异常处理
+                try:
+                    term_width = os.get_terminal_size().columns
+                except (OSError, IOError):
+                    term_width = 80  # 使用默认宽度
+
+                # 计算每个epoch的总迭代次数
+                total_batches = len(self.train_loaders)
+
                 pbar = tqdm(enumerate(self.train_loaders),
-                            desc=f'Epoch {epoch+1}/{self.local_epochs}'.ljust(
-                                15),
-                            bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
-                            total=len(self.train_loaders),
-                            ncols=term_width)
+                          desc=f'Epoch {epoch+1}/{self.local_epochs}',
+                          total=total_batches,  # 明确设置total
+                          bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
+                          ncols=term_width)
+                
                 for i, item in pbar:
                     visual_feat, text_labels, feat_lengths = item
                     visual_feat = visual_feat.to(self.device)
