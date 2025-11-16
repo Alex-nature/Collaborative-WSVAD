@@ -6,8 +6,7 @@ import torch.nn.functional as F
 from torch import nn
 from utils.clip import clip
 from utils.prompt_net import PromptLearner
-from utils.hierarchical_transformer import HierarchicalTransformer
-from utils.adaptive_temporal import AdaptiveConvGCNTemporal
+from utils.tca_module import TCATransformerEncoder
 
 class LayerNorm(nn.LayerNorm):
     def forward(self, x: torch.Tensor):
@@ -68,19 +67,15 @@ class Model(nn.Module):
                  visual_width: int,
                  visual_head: int,
                  visual_layers: int,
-                 local_layers: int,
-                 global_layers: int,
-                 window_size: int,
-                 transformer_dropout: float,
-                 temporal_type: str,
                  device: str,
-                 # Adaptive Conv+GCN parameters
-                 tcn_out_dim: int = None,
-                 gcn_layers: int = 2,
-                 min_window: int = 2,
-                 max_window: int = 16,
-                 use_feature_sim: bool = True,
-                 weight_hidden_dim: int = 128):
+                 # TCA参数
+                 use_tca: bool = True,
+                 tca_window_size: int = 9,
+                 tca_dropout: float = 0.1,
+                 use_distance_adj: bool = True,
+                 tca_gamma: float = 0.6,
+                 tca_bias: float = 0.2,
+                 tca_norm: bool = True):
         super().__init__()
 
         # 保存基本参数
@@ -89,6 +84,7 @@ class Model(nn.Module):
         self.prompt_prefix = prompt_prefix
         self.prompt_postfix = prompt_postfix
         self.device = device
+        self.use_tca = use_tca
         
 
         # 加载CLIP模型
@@ -96,36 +92,27 @@ class Model(nn.Module):
         for clip_param in self.clipmodel.parameters():
             clip_param.requires_grad = False
         
-        # 初始化视觉编码器
-        if temporal_type == 'hierarchical':
-            self.temporal = HierarchicalTransformer(
+        # 初始化视觉编码器 - 根据配置选择TCA或标准Transformer
+        if use_tca:
+            print("\n🌊 使用TCA (Temporal Context Aggregation) 时序编码器")
+            self.temporal = TCATransformerEncoder(
                 width=visual_width,
-                local_layers=local_layers,
-                global_layers=global_layers,
+                layers=visual_layers,
                 heads=visual_head,
-                window_size=window_size,
-                dropout=transformer_dropout,
-                use_local_residual=False,
-                use_global_residual=False
+                dropout=tca_dropout,
+                window_size=tca_window_size,
+                use_distance_adj=use_distance_adj,
+                gamma=tca_gamma,
+                bias=tca_bias,
+                use_norm=tca_norm
             )
-        elif temporal_type == 'adaptive_conv_gcn':
-            # 自适应卷积+图卷积时序建模
-            self.temporal = AdaptiveConvGCNTemporal(
-                width=visual_width,
-                tcn_out_dim=tcn_out_dim,
-                gcn_layers=gcn_layers,
-                min_window=min_window,
-                max_window=max_window,
-                dropout=transformer_dropout,
-                use_feature_sim=use_feature_sim,
-                weight_hidden_dim=weight_hidden_dim
-            )
-        else:  # temporal_type == 'standard'
+        else:
+            print("\n⚡ 使用标准Transformer时序编码器")
             self.temporal = TransformerEncoder(
-            width=visual_width,
-            layers=visual_layers,
-            heads=visual_head,
-        )
+                width=visual_width,
+                layers=visual_layers,
+                heads=visual_head
+            )
         
         # 初始化提示学习器
         self.prompt_learner = PromptLearner()

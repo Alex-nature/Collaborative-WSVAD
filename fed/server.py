@@ -133,6 +133,11 @@ class FedAvgServer(BaseServer):
               f" ap: {sum(res_dict['ap']) / len(res_dict['ap'])}")
 
     def train(self, dir_name):
+        # 早停法参数
+        patience = 10  # 连续10轮无改善则停止
+        min_improvement = 0.0001  # 0.01%的最小改善阈值
+        no_improvement_count = 0  # 记录连续无改善的轮数
+        
         for g in range(self.global_rounds):
             print(f"\n-------- round: {g + 1} / {self.global_rounds} --------")
             self.local_weights.clear()
@@ -159,17 +164,32 @@ class FedAvgServer(BaseServer):
             metric_name = 'roc' if self.dataset == 'ucf' else 'ap'
             current_metric = res[self.dataset]
 
-            if current_metric > self.best:
+            # 检查是否有改善（当前指标 > 最佳指标 * (1 + 最小改善阈值)）
+            improvement_threshold = self.best * (1 + min_improvement)
+            has_improvement = current_metric > improvement_threshold
+
+            if has_improvement:
                 self.best = current_metric
                 self.best_model = self.global_parameter
                 model_path = f"{dir_name}/model_{metric_name}_{current_metric:.4f}.pth"
                 torch.save(self.model.state_dict(), model_path)
                 print(f"\n模型已保存到: {model_path}")
                 print(f"当前最佳{metric_name.upper()}: {self.best:.4f}")
+                no_improvement_count = 0  # 重置计数器
+            else:
+                no_improvement_count += 1
+                print(f"\n无显著改善 ({no_improvement_count}/{patience})")
 
             print(f"\n当前轮次{metric_name.upper()}: {current_metric:.4f}")
             print(f"历史最佳{metric_name.upper()}: {self.best:.4f}")
+            print(f"连续无改善轮数: {no_improvement_count}/{patience}")
             print("\n" + "="*50)  # 添加分隔线
+
+            # 早停判断
+            if no_improvement_count >= patience:
+                print(f"\n早停触发！连续{patience}轮无显著改善（阈值: {min_improvement*100:.2f}%）")
+                print(f"在第 {g + 1} 轮停止训练")
+                break
 
         print("\n训练完成！")
         final_model_path = f"{dir_name}/model_final_{metric_name}_{self.best:.4f}.pth"

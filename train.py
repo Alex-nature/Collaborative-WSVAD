@@ -46,17 +46,24 @@ if __name__ == "__main__":
         train_loaders, test_loader = make_ucf_dataloader(
             args.split_mode, args.clients_num, args.batch_size, args.visual_length)
 
-    model = Model(args.embed_dim, args.visual_length, args.prompt_prefix, args.prompt_postfix, 
-                  args.visual_width, args.visual_head, args.visual_layers, 
-                  args.local_layers, args.global_layers, args.window_size, args.transformer_dropout, 
-                  args.temporal_type, device,
-                  # Adaptive Conv+GCN parameters
-                  tcn_out_dim=args.tcn_out_dim,
-                  gcn_layers=args.gcn_layers,
-                  min_window=args.min_window,
-                  max_window=args.max_window,
-                  use_feature_sim=args.use_feature_sim,
-                  weight_hidden_dim=args.weight_hidden_dim).to(device)
+    model = Model(
+        args.embed_dim, 
+        args.visual_length, 
+        args.prompt_prefix, 
+        args.prompt_postfix, 
+        args.visual_width, 
+        args.visual_head, 
+        args.visual_layers, 
+        device,
+        # TCA参数
+        use_tca=args.use_tca,
+        tca_window_size=args.tca_window_size,
+        tca_dropout=args.tca_dropout,
+        use_distance_adj=args.use_distance_adj,
+        tca_gamma=args.tca_gamma,
+        tca_bias=args.tca_bias,
+        tca_norm=args.tca_norm
+    ).to(device)
 
     if args.load_model == 1:
         checkpoint = torch.load(args.checkpoint)
