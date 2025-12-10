@@ -51,8 +51,7 @@ def inference(dataset, model, test_loader, gt, device):
                 else:
                     lengths[j] = length
             lengths = lengths.to(int)
-
-            logits2 = model(visual, prompt_text, lengths)
+            logits2 = model(visual, prompt_text, lengths, is_training=False)
 
             logits2 = logits2.reshape(logits2.shape[0] * logits2.shape[1], logits2.shape[2])
             prob2 = (1 - logits2[0:len_cur].softmax(dim=-1)[:, 0].squeeze(-1))
@@ -85,11 +84,26 @@ if __name__ == "__main__":
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-    model = Model(args.embed_dim, args.visual_length, args.prompt_prefix,
-                  args.prompt_postfix, args.visual_width,
-                  args.visual_head, args.local_layers,
-                  args.global_layers, args.window_size,
-                  args.transformer_dropout, device).to(device)
+    model = Model(
+        args.embed_dim, 
+        args.visual_length, 
+        args.prompt_prefix, 
+        args.prompt_postfix, 
+        args.visual_width, 
+        args.visual_head, 
+        args.visual_layers, 
+        device,
+        # TCA参数
+        use_tca=args.use_tca,
+        tca_window_size=args.tca_window_size,
+        tca_dropout=args.tca_dropout,
+        use_distance_adj=args.use_distance_adj,
+        tca_gamma=args.tca_gamma,
+        tca_bias=args.tca_bias,
+        tca_norm=args.tca_norm,
+        # 双流架构参数
+        use_dual_stream=args.use_dual_stream
+    ).to(device)
 
     checkpoint = torch.load(args.checkpoint, map_location='cuda:0')
 
