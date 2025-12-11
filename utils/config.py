@@ -34,10 +34,6 @@ parser.add_argument('--use_distance_adj', default=True, type=bool, help="whether
 parser.add_argument('--tca_gamma', default=0.6, type=float, help="gamma parameter for distance decay in TCA")
 parser.add_argument('--tca_bias', default=0.2, type=float, help="bias parameter for distance adjacency in TCA")
 parser.add_argument('--tca_norm', default=True, type=bool, help="whether to use normalization in TCA")
-
-# 双流架构 (Actor-Action Disentangled Prompting) 参数
-parser.add_argument('--use_dual_stream', default=True, type=bool, help="whether to use dual stream architecture (Actor-Action)")
-
 # # Hierarchical Transformer parameters (1,长短期时间建模)
 # parser.add_argument('--local_layers', default=2, type=int, help="number of local attention layers")
 # parser.add_argument('--global_layers', default=2, type=int, help="number of global attention layers")

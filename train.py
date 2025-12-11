@@ -62,9 +62,7 @@ if __name__ == "__main__":
         use_distance_adj=args.use_distance_adj,
         tca_gamma=args.tca_gamma,
         tca_bias=args.tca_bias,
-        tca_norm=args.tca_norm,
-        # 双流架构参数
-        use_dual_stream=args.use_dual_stream
+        tca_norm=args.tca_norm
     ).to(device)
 
     if args.load_model == 1:
