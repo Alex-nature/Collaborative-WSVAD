@@ -46,12 +46,13 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, dropout: float = 0, attn_mask: torch.Tensor = None, ):
+    def __init__(self, width: int, layers: int, heads: int, dropout: float = 0, attn_mask: torch.Tensor = None):
         super(TransformerEncoder, self).__init__()
         self.width = width
         self.layers = layers
         self.resblocks = nn.Sequential(
-            *[ResidualAttentionBlock(width, heads, dropout, attn_mask) for _ in range(layers)])
+            *[ResidualAttentionBlock(width, heads, dropout, attn_mask) for _ in range(layers)]
+        )
 
     def forward(self, x: torch.Tensor):
         return self.resblocks(x)
@@ -60,22 +61,23 @@ class TransformerEncoder(nn.Module):
 class Model(nn.Module):
     def __init__(
         self,
-                 embed_dim: int,
-                 visual_length: int,
-                 prompt_prefix: int,
-                 prompt_postfix: int,
-                 visual_width: int,
-                 visual_head: int,
-                 visual_layers: int,
-                 device: str,
-                 # TCA参数
-                 use_tca: bool = True,
-                 tca_window_size: int = 9,
-                 tca_dropout: float = 0.1,
-                 use_distance_adj: bool = True,
-                 tca_gamma: float = 0.6,
-                 tca_bias: float = 0.2,
-                 tca_norm: bool = True):
+        embed_dim: int,
+        visual_length: int,
+        prompt_prefix: int,
+        prompt_postfix: int,
+        visual_width: int,
+        visual_head: int,
+        visual_layers: int,
+        device: str,
+        # TCA参数
+        use_tca: bool = True,
+        tca_window_size: int = 9,
+        tca_dropout: float = 0.1,
+        use_distance_adj: bool = True,
+        tca_gamma: float = 0.6,
+        tca_bias: float = 0.2,
+        tca_norm: bool = True
+    ):
         super().__init__()
 
         # 保存基本参数
@@ -85,18 +87,17 @@ class Model(nn.Module):
         self.prompt_postfix = prompt_postfix
         self.device = device
         self.use_tca = use_tca
-        
 
         # 加载CLIP模型
         self.clipmodel, _ = clip.load("ViT-B/16", device)
         for clip_param in self.clipmodel.parameters():
             clip_param.requires_grad = False
-        
+
         # 初始化视觉编码器 - 根据配置选择TCA或标准Transformer
         if use_tca:
             print("\n🌊 使用TCA (Temporal Context Aggregation) 时序编码器")
             self.temporal = TCATransformerEncoder(
-                width=visual_width,
+                width=visual_width,        # 例如 512
                 layers=visual_layers,
                 heads=visual_head,
                 dropout=tca_dropout,
@@ -113,30 +114,43 @@ class Model(nn.Module):
                 layers=visual_layers,
                 heads=visual_head
             )
-        
-        # 初始化提示学习器
-        self.prompt_learner = PromptLearner()
+
+        # 初始化提示学习器（正/负各一套，避免语义干扰）
+        self.prompt_learner_pos = PromptLearner()
+        self.prompt_learner_neg = PromptLearner()
 
         # 初始化其他组件
         self.frame_position_embeddings = nn.Embedding(visual_length, visual_width)
         self.global_text_prompt_embeddings = nn.Embedding(77, self.embed_dim)
         self.dtype = self.clipmodel.dtype
+        
         self.initialize_parameters()
 
     def initialize_parameters(self):
         nn.init.normal_(self.frame_position_embeddings.weight, std=0.01)
 
     def encode_video(self, images):
+        """
+        编码视频特征
+        
+        Args:
+            images: 输入视频特征 [batch, seq_len, dim]
+            
+        Returns:
+            返回单一特征 [batch, seq_len, dim]
+        """
         images = images.to(torch.float)
         position_ids = torch.arange(self.visual_length, device=self.device)
         position_ids = position_ids.unsqueeze(0).expand(images.shape[0], -1)
         frame_position_embeddings = self.frame_position_embeddings(position_ids)
         frame_position_embeddings = frame_position_embeddings.permute(1, 0, 2)
         images = images.permute(1, 0, 2) + frame_position_embeddings
-
+        
+        # 经过时序编码器处理
         x = self.temporal(images)
-        x = x.permute(1, 0, 2)
-        return x
+        visual_features = x.permute(1, 0, 2)  # [batch, seq_len, dim]
+        
+        return visual_features
 
     def get_tokenized_classnames(self, classes):
         prompts = [" ".join(["X"] * 4) + " " + name + "." for name in classes]
@@ -147,8 +161,14 @@ class Model(nn.Module):
 
         return embedding, tokenized_prompts
 
-    def encode_text_prompt(self, text, visual):
-        """生成动态文本特征"""
+    def encode_text_prompt(self, text, visual, is_negative: bool = False):
+        """
+        生成动态文本特征
+        
+        Args:
+            text: 类别名称列表
+            visual: 视觉特征 [batch, seq_len, dim]
+        """
         classes = [name.replace("_", " ") for name in text]
         class_tokens = torch.cat([clip.tokenize(p) for p in classes])
         class_tokens = class_tokens.to(self.device)
@@ -157,10 +177,13 @@ class Model(nn.Module):
             class_features = class_features / class_features.norm(dim=-1, keepdim=True)
 
         context_embedding = class_features
-
         prompt_vectors, tokenized_prompts = self.get_tokenized_classnames(classes)
 
-        context = self.prompt_learner(context_embedding, visual)
+        # 使用提示学习器生成动态上下文
+        # 根据分支选择对应的提示学习器
+        prompt_learner = self.prompt_learner_neg if is_negative else self.prompt_learner_pos
+        context = prompt_learner(context_embedding, visual)
+        
         prompt_vectors = torch.cat(
             [
                 prompt_vectors[:, :1],
@@ -176,13 +199,14 @@ class Model(nn.Module):
         
         return text_features
 
-    def forward(self, visual, text, lengths, is_training=True):
+    def forward(self, visual, text, lengths, is_training=True, neg_text=None):
+        # ========== 单流架构 ==========
         # 1. 获取视觉特征
         visual_features = self.encode_video(visual)
         visual_features_norm = visual_features / visual_features.norm(dim=-1, keepdim=True)
         
         # 2. 获取文本特征
-        text_features = self.encode_text_prompt(text, visual_features)
+        text_features = self.encode_text_prompt(text, visual_features, is_negative=False)
         
         # 3. 扩展维度以匹配批次大小
         text_features = text_features.unsqueeze(0).expand(
@@ -193,4 +217,14 @@ class Model(nn.Module):
         logits = visual_features_norm @ text_features.type(visual_features_norm.dtype)
         logits = logits * self.clipmodel.logit_scale.exp()
         
+        # 5. 负提示分支（与正提示完全同流程）
+        if neg_text is not None:
+            neg_text_features = self.encode_text_prompt(neg_text, visual_features, is_negative=True)
+            neg_text_features = neg_text_features.unsqueeze(0).expand(
+                visual_features.shape[0], neg_text_features.shape[0], neg_text_features.shape[1])
+            neg_text_features = neg_text_features.permute(0, 2, 1)
+            logits_neg = visual_features_norm @ neg_text_features.type(visual_features_norm.dtype)
+            logits_neg = logits_neg * self.clipmodel.logit_scale.exp()
+            return logits, logits_neg
+
         return logits

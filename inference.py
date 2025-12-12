@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from utils import config
 from utils.dataset import XDDataset, UCFDataset
 from utils.model import Model
-from utils.tools import get_prompt_text
+from utils.tools import get_prompt_text, build_negative_prompts
 
 
 def inference(dataset, model, test_loader, gt, device):
@@ -24,6 +24,7 @@ def inference(dataset, model, test_loader, gt, device):
                           'B5': 'abuse', 'B6': 'car accident', 'G': 'explosion'})
 
     prompt_text = get_prompt_text(label_map)
+    neg_prompt_text, _ = build_negative_prompts(label_map)
     with torch.no_grad():
         max_len = 256
         for i, item in enumerate(test_loader):
@@ -51,11 +52,36 @@ def inference(dataset, model, test_loader, gt, device):
                 else:
                     lengths[j] = length
             lengths = lengths.to(int)
+            outputs = model(visual, prompt_text, lengths, is_training=False, neg_text=neg_prompt_text)
+            if isinstance(outputs, tuple):
+                logits2, logits2_neg = outputs
+            else:
+                logits2, logits2_neg = outputs, None
 
-            logits2 = model(visual, prompt_text, lengths)
-
+            # 展平时间维
             logits2 = logits2.reshape(logits2.shape[0] * logits2.shape[1], logits2.shape[2])
-            prob2 = (1 - logits2[0:len_cur].softmax(dim=-1)[:, 0].squeeze(-1))
+            if logits2_neg is not None:
+                logits2_neg = logits2_neg.reshape(logits2_neg.shape[0] * logits2_neg.shape[1], logits2_neg.shape[2])
+
+            # 正分支获取 normal 置信度 -> 1 - P(normal)
+            probs_pos = logits2[0:len_cur].softmax(dim=-1)
+            normal_idx = prompt_text.index('normal')
+            score_pos = 1 - probs_pos[:, normal_idx]
+
+            # 负分支获取 abnormal 置信度
+            if logits2_neg is not None:
+                probs_neg = logits2_neg[0:len_cur].softmax(dim=-1)
+                abnormal_idx = neg_prompt_text.index('abnormal')
+                score_neg = probs_neg[:, abnormal_idx]
+            else:
+                # 兼容无负分支时仅用正分支
+                score_neg = torch.zeros_like(score_pos)
+
+            # 门控融合（可调超参）
+            gate_alpha = 0.7
+            fused_score = gate_alpha * score_pos + (1 - gate_alpha) * score_neg
+
+            prob2 = fused_score.squeeze(-1)
 
             if i == 0:
                 ap2 = prob2

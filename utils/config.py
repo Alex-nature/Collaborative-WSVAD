@@ -4,7 +4,7 @@ parser = argparse.ArgumentParser()
 # 你好
 parser.add_argument("--dataset", type=str, default="ucf", choices=["ucf", "xd"])
 parser.add_argument("--batch_size", type=int, default=64, help="batch size")
-parser.add_argument("--learning_rate", type=float, default=1e-5, help="Local learning rate")
+parser.add_argument("--learning_rate", type=float, default=1e-4, help="Local learning rate")
 parser.add_argument("--global_rounds", type=int, default=20, help="Global federated learning rounds")
 parser.add_argument("--local_epochs", type=int, default=10, help="local training epochs for each client")
 parser.add_argument("--algorithm", type=str, default="FedAvg", choices=["FedAvg", "FedProx", "Scaffold"])
@@ -28,11 +28,11 @@ parser.add_argument('--prompt_postfix', default=10, type=int)
 
 # TCA (Temporal Context Aggregation) 参数
 parser.add_argument('--use_tca', default=True, type=bool, help="whether to use TCA instead of standard Transformer")
-parser.add_argument('--tca_window_size', default=31, type=int, help="sliding window size for local attention in TCA")
+parser.add_argument('--tca_window_size', default=9, type=int, help="sliding window size for local attention in TCA")
 parser.add_argument('--tca_dropout', default=0.1, type=float, help="dropout rate for TCA")
 parser.add_argument('--use_distance_adj', default=True, type=bool, help="whether to use distance adjacency matrix in TCA")
-parser.add_argument('--tca_gamma', default=0.06, type=float, help="gamma parameter for distance decay in TCA")
-parser.add_argument('--tca_bias', default=0.02, type=float, help="bias parameter for distance adjacency in TCA")
+parser.add_argument('--tca_gamma', default=0.6, type=float, help="gamma parameter for distance decay in TCA")
+parser.add_argument('--tca_bias', default=0.2, type=float, help="bias parameter for distance adjacency in TCA")
 parser.add_argument('--tca_norm', default=True, type=bool, help="whether to use normalization in TCA")
 
 # # Hierarchical Transformer parameters (1,长短期时间建模)

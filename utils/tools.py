@@ -47,6 +47,31 @@ def get_prompt_text(label_map: dict):
 
     return prompt_text
 
+# 构造负提示：按已有 label_map 的 value 生成对应否定文本
+def build_negative_prompts(label_map: dict):
+    """
+    输入: label_map (如 {"Abuse": "abuse", "Normal": "normal"})
+    输出:
+        neg_prompt_text: 与 label_map 顺序一致的负提示列表
+        neg_label_map: {原始key: 负提示字符串}
+    规则:
+        - 对 normal/normal-like 使用 "abnormal"
+        - 其他类别使用 "no {label_value}"
+    """
+    neg_prompt_text = []
+    neg_label_map = {}
+
+    for k, v in label_map.items():
+        v_lower = v.lower()
+        if v_lower in ["normal"]:
+            neg_text = "abnormal"
+        else:
+            neg_text = f"no {v_lower}"
+        neg_prompt_text.append(neg_text)
+        neg_label_map[k] = neg_text
+
+    return neg_prompt_text, neg_label_map
+
 
 def get_batch_mask(lengths, maxlen):
     batch_size = lengths.shape[0]
@@ -128,5 +153,3 @@ def CLASM(logits, labels, lengths, device):
         instance_logits = torch.cat([instance_logits, torch.mean(tmp, 0, keepdim=True)], dim=0)
     milloss = -torch.mean(torch.sum(labels * F.log_softmax(instance_logits, dim=1), dim=1), dim=0)
     return milloss
-
-

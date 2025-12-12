@@ -2,7 +2,7 @@ import copy
 from collections import OrderedDict
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
-from utils.tools import get_batch_label, get_prompt_text, CLASM
+from utils.tools import get_batch_label, get_prompt_text, CLASM, build_negative_prompts
 from tqdm import tqdm
 import os
 
@@ -49,6 +49,7 @@ class FedAvgClient:
     def train(self):
         self.model.train()
         prompt_text = get_prompt_text(self.label_map)
+        neg_prompt_text, _ = build_negative_prompts(self.label_map)
 
         if self.dataset == 'ucf':
             loss_total2 = 0
@@ -90,9 +91,15 @@ class FedAvgClient:
 
                     text_labels = get_batch_label(text_labels, prompt_text, self.label_map, self.dataset).to(
                         self.device)
-                    logits = self.model(visual_features,
-                                        prompt_text,
-                                        feat_lengths)
+                    logits_out = self.model(visual_features,
+                                            prompt_text,
+                                            feat_lengths, is_training=True,
+                                            neg_text=neg_prompt_text)
+                    if isinstance(logits_out, tuple):
+                        logits_pos, logits_neg = logits_out
+                    else:
+                        logits_pos, logits_neg = logits_out, None
+                    logits = logits_pos
 
                     loss2 = CLASM(logits, text_labels,
                                   feat_lengths, self.device)
@@ -116,7 +123,7 @@ class FedAvgClient:
                 print(f'  Epoch {epoch+1}/{self.local_epochs} 平均Loss: {avg_loss_epoch:.6f}')
 
             # 输出所有epoch的loss概览
-            # print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
+            print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
             print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
             return (self.get_global_parameters(), loss_total2,
@@ -144,7 +151,7 @@ class FedAvgClient:
                           total=total_batches,
                           bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
                           ncols=term_width)
-                
+           
                 for i, item in pbar:
                     visual_feat, text_labels, feat_lengths = item
                     visual_feat = visual_feat.to(self.device)
@@ -153,9 +160,15 @@ class FedAvgClient:
                     text_labels = get_batch_label(text_labels, prompt_text, self.label_map, self.dataset).to(
                         self.device)
 
-                    logits = self.model(visual_feat,
-                                        prompt_text,
-                                        feat_lengths)
+                    logits_out = self.model(visual_feat,
+                                            prompt_text,
+                                            feat_lengths, is_training=True,
+                                            neg_text=neg_prompt_text)
+                    if isinstance(logits_out, tuple):
+                        logits_pos, logits_neg = logits_out
+                    else:
+                        logits_pos, logits_neg = logits_out, None
+                    logits = logits_pos
 
                     loss2 = CLASM(logits, text_labels,
                                   feat_lengths, self.device)
@@ -179,7 +192,7 @@ class FedAvgClient:
                 print(f'  Epoch {epoch+1}/{self.local_epochs} 平均Loss: {avg_loss_epoch:.6f}')
 
             # 输出所有epoch的loss概览
-            # print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
+            print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
             print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
             return (self.get_global_parameters(), loss_total2,
