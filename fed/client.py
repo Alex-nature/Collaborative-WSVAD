@@ -27,6 +27,7 @@ class FedAvgClient:
         self.local_epochs = local_epochs
         self.label_map = label_map
         self.device = device
+
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=self.learning_rate)
         self.scheduler = MultiStepLR(
@@ -43,7 +44,6 @@ class FedAvgClient:
         for name, p in self.model.named_parameters():
             if p.requires_grad:
                 new_parameters[name] = p.data.clone()
-
         return new_parameters
 
     def train(self):
@@ -52,7 +52,7 @@ class FedAvgClient:
 
         if self.dataset == 'ucf':
             loss_total2 = 0
-            epoch_losses = []  # 记录每个epoch的平均loss
+            epoch_losses = []  # 记录每个epoch的平均loss（这里记录“总loss”，包含VTO）
 
             for epoch in range(self.local_epochs):
                 normal_iter = iter(self.train_loaders[0])
@@ -63,59 +63,59 @@ class FedAvgClient:
                 total_iters = min(
                     len(self.train_loaders[0]), len(self.train_loaders[1]))
 
-                # 获取终端宽度，添加异常处理
                 try:
                     term_width = os.get_terminal_size().columns
                 except (OSError, IOError):
                     term_width = 80  # 使用默认宽度
 
                 pbar = tqdm(range(total_iters),
-                          desc=f'Epoch {epoch+1}/{self.local_epochs}',
-                          total=total_iters,  # 明确设置total
-                          bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
-                          ncols=term_width)
+                            desc=f'Epoch {epoch+1}/{self.local_epochs}',
+                            total=total_iters,
+                            bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
+                            ncols=term_width)
+
                 for i in pbar:
-                    normal_features, normal_label, normal_lengths = next(
-                        normal_iter)
-                    anomaly_features, anomaly_label, anomaly_lengths = next(
-                        anomaly_iter)
+                    normal_features, normal_label, normal_lengths = next(normal_iter)
+                    anomaly_features, anomaly_label, anomaly_lengths = next(anomaly_iter)
 
                     visual_features = torch.cat(
                         [normal_features, anomaly_features], dim=0).to(self.device)
 
-                    text_labels = list(normal_label) + list(anomaly_label)
+                    text_labels_raw = list(normal_label) + list(anomaly_label)
 
                     feat_lengths = torch.cat(
                         [normal_lengths, anomaly_lengths], dim=0).to(self.device)
 
-                    text_labels = get_batch_label(text_labels, prompt_text, self.label_map, self.dataset).to(
-                        self.device)
-                    logits = self.model(visual_features,
-                                        prompt_text,
-                                        feat_lengths, is_training=True)
+                    text_labels = get_batch_label(
+                        text_labels_raw, prompt_text, self.label_map, self.dataset
+                    ).to(self.device)
 
-                    loss2 = CLASM(logits, text_labels,
-                                  feat_lengths, self.device)
-                    loss_per_epoch2 += loss2.item()
+                    logits = self.model(
+                        visual_features,
+                        prompt_text,
+                        feat_lengths,
+                        is_training=True
+                    )
 
-                    loss = loss2
+                    # 计算损失
+                    loss = CLASM(logits, text_labels, feat_lengths, self.device)
+
+                    loss_per_epoch2 += loss.item()
 
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
 
                     iters += 1
-                    pbar.set_postfix({'loss': f'{loss2.item():.4f}'})
+                    pbar.set_postfix({'loss': f'{loss.item():.4f}'})
 
-                # 计算当前epoch的平均loss
+                # 计算当前epoch的平均loss（总loss）
                 avg_loss_epoch = loss_per_epoch2 / iters
                 epoch_losses.append(avg_loss_epoch)
                 loss_total2 += avg_loss_epoch
-                
-                # 输出当前epoch的整体loss
+
                 print(f'  Epoch {epoch+1}/{self.local_epochs} 平均Loss: {avg_loss_epoch:.6f}')
 
-            # 输出所有epoch的loss概览
             print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
             print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
@@ -124,61 +124,59 @@ class FedAvgClient:
 
         elif self.dataset == 'xd':
             loss_total2 = 0
-            epoch_losses = []  # 记录每个epoch的平均loss
+            epoch_losses = []  # 记录每个epoch的平均loss（总loss）
 
             for epoch in range(self.local_epochs):
                 loss_per_epoch2 = 0
                 iters = 0
 
-                # 获取终端宽度，添加异常处理
                 try:
                     term_width = os.get_terminal_size().columns
                 except (OSError, IOError):
                     term_width = 80  # 使用默认宽度
 
-                # 获取当前训练加载器的长度
-                total_batches = len(self.train_loaders)  # 这里self.train_loaders已经是一个DataLoader
+                total_batches = len(self.train_loaders)
 
                 pbar = tqdm(enumerate(self.train_loaders),
-                          desc=f'Epoch {epoch+1}/{self.local_epochs}',
-                          total=total_batches,
-                          bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
-                          ncols=term_width)
-           
+                            desc=f'Epoch {epoch+1}/{self.local_epochs}',
+                            total=total_batches,
+                            bar_format='{desc}: {percentage:3.0f}%|{bar:50}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]',
+                            ncols=term_width)
+
                 for i, item in pbar:
-                    visual_feat, text_labels, feat_lengths = item
+                    visual_feat, text_labels_raw, feat_lengths = item
                     visual_feat = visual_feat.to(self.device)
                     feat_lengths = feat_lengths.to(self.device)
 
-                    text_labels = get_batch_label(text_labels, prompt_text, self.label_map, self.dataset).to(
-                        self.device)
+                    text_labels = get_batch_label(
+                        text_labels_raw, prompt_text, self.label_map, self.dataset
+                    ).to(self.device)
 
-                    logits = self.model(visual_feat,
-                                        prompt_text,
-                                        feat_lengths, is_training=True)
+                    logits = self.model(
+                        visual_feat,
+                        prompt_text,
+                        feat_lengths,
+                        is_training=True
+                    )
 
-                    loss2 = CLASM(logits, text_labels,
-                                  feat_lengths, self.device)
-                    loss_per_epoch2 += loss2.item()
+                    # 计算损失
+                    loss = CLASM(logits, text_labels, feat_lengths, self.device)
 
-                    loss = loss2
+                    loss_per_epoch2 += loss.item()
 
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
 
                     iters += 1
-                    pbar.set_postfix({'loss': f'{loss2.item():.4f}'})
+                    pbar.set_postfix({'loss': f'{loss.item():.4f}'})
 
-                # 计算当前epoch的平均loss
                 avg_loss_epoch = loss_per_epoch2 / iters
                 epoch_losses.append(avg_loss_epoch)
                 loss_total2 += avg_loss_epoch
-                
-                # 输出当前epoch的整体loss
+
                 print(f'  Epoch {epoch+1}/{self.local_epochs} 平均Loss: {avg_loss_epoch:.6f}')
 
-            # 输出所有epoch的loss概览
             print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
             print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
