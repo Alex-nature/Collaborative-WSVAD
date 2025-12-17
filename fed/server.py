@@ -134,7 +134,7 @@ class FedAvgServer(BaseServer):
 
     def train(self, dir_name):
         # 早停法参数
-        patience = 20  # 连续10轮无改善则停止
+        patience = 10  # 连续10轮无改善则停止
         min_improvement = 0.0001  # 0.01%的最小改善阈值
         no_improvement_count = 0  # 记录连续无改善的轮数
         

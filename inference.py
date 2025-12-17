@@ -25,6 +25,7 @@ def inference(dataset, model, test_loader, gt, device):
 
     prompt_text = get_prompt_text(label_map)
     neg_prompt_text, _ = build_negative_prompts(label_map)
+    # neg_prompt_text = None
     with torch.no_grad():
         max_len = 256
         for i, item in enumerate(test_loader):
@@ -78,7 +79,7 @@ def inference(dataset, model, test_loader, gt, device):
                 score_neg = torch.zeros_like(score_pos)
 
             # 门控融合（可调超参）
-            gate_alpha = 0.7
+            gate_alpha = 0.8
             fused_score = gate_alpha * score_pos + (1 - gate_alpha) * score_neg
 
             prob2 = fused_score.squeeze(-1)

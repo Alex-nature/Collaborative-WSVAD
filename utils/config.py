@@ -28,7 +28,7 @@ parser.add_argument('--prompt_postfix', default=10, type=int)
 
 # TCA (Temporal Context Aggregation) 参数
 parser.add_argument('--use_tca', default=True, type=bool, help="whether to use TCA instead of standard Transformer")
-parser.add_argument('--tca_window_size', default=9, type=int, help="sliding window size for local attention in TCA")
+parser.add_argument('--tca_window_size', default=32, type=int, help="sliding window size for local attention in TCA")
 parser.add_argument('--tca_dropout', default=0.1, type=float, help="dropout rate for TCA")
 parser.add_argument('--use_distance_adj', default=True, type=bool, help="whether to use distance adjacency matrix in TCA")
 parser.add_argument('--tca_gamma', default=0.6, type=float, help="gamma parameter for distance decay in TCA")
