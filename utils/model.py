@@ -115,9 +115,8 @@ class Model(nn.Module):
                 heads=visual_head
             )
 
-        # 初始化提示学习器（正/负各一套，避免语义干扰）
+        # 初始化提示学习器
         self.prompt_learner_pos = PromptLearner()
-        self.prompt_learner_neg = PromptLearner()
 
         # 初始化其他组件
         self.frame_position_embeddings = nn.Embedding(visual_length, visual_width)
@@ -161,7 +160,7 @@ class Model(nn.Module):
 
         return embedding, tokenized_prompts
 
-    def encode_text_prompt(self, text, visual, is_negative: bool = False):
+    def encode_text_prompt(self, text, visual):
         """
         生成动态文本特征
         
@@ -180,9 +179,7 @@ class Model(nn.Module):
         prompt_vectors, tokenized_prompts = self.get_tokenized_classnames(classes)
 
         # 使用提示学习器生成动态上下文
-        # 根据分支选择对应的提示学习器
-        prompt_learner = self.prompt_learner_neg if is_negative else self.prompt_learner_pos
-        context = prompt_learner(context_embedding, visual)
+        context = self.prompt_learner_pos(context_embedding, visual)
         
         prompt_vectors = torch.cat(
             [
@@ -199,14 +196,14 @@ class Model(nn.Module):
         
         return text_features
 
-    def forward(self, visual, text, lengths, is_training=True, neg_text=None):
+    def forward(self, visual, text, lengths, is_training=True):
         # ========== 单流架构 ==========
         # 1. 获取视觉特征
         visual_features = self.encode_video(visual)
         visual_features_norm = visual_features / visual_features.norm(dim=-1, keepdim=True)
         
         # 2. 获取文本特征
-        text_features = self.encode_text_prompt(text, visual_features, is_negative=False)
+        text_features = self.encode_text_prompt(text, visual_features)
         
         # 3. 扩展维度以匹配批次大小
         text_features = text_features.unsqueeze(0).expand(
@@ -217,14 +214,4 @@ class Model(nn.Module):
         logits = visual_features_norm @ text_features.type(visual_features_norm.dtype)
         logits = logits * self.clipmodel.logit_scale.exp()
         
-        # 5. 负提示分支（与正提示完全同流程）
-        if neg_text is not None:
-            neg_text_features = self.encode_text_prompt(neg_text, visual_features, is_negative=True)
-            neg_text_features = neg_text_features.unsqueeze(0).expand(
-                visual_features.shape[0], neg_text_features.shape[0], neg_text_features.shape[1])
-            neg_text_features = neg_text_features.permute(0, 2, 1)
-            logits_neg = visual_features_norm @ neg_text_features.type(visual_features_norm.dtype)
-            logits_neg = logits_neg * self.clipmodel.logit_scale.exp()
-            return logits, logits_neg
-
         return logits

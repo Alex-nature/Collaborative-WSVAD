@@ -2,7 +2,7 @@ import copy
 from collections import OrderedDict
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
-from utils.tools import get_batch_label, get_prompt_text, CLASM, build_negative_prompts, VTOM
+from utils.tools import get_batch_label, get_prompt_text, CLASM
 from tqdm import tqdm
 import os
 
@@ -28,11 +28,6 @@ class FedAvgClient:
         self.label_map = label_map
         self.device = device
 
-        # 负分支损失权重（可调）
-        self.vto_weight = 0.05
-        # 负分支温度参数（防止sigmoid饱和导致VTO过快趋近0）
-        self.vto_tau = 10  # 常用 5~20；先用10比较稳
-
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=self.learning_rate)
         self.scheduler = MultiStepLR(
@@ -54,14 +49,11 @@ class FedAvgClient:
     def train(self):
         self.model.train()
         prompt_text = get_prompt_text(self.label_map)
-        neg_prompt_text, _ = build_negative_prompts(self.label_map)
-        # neg_prompt_text = None
 
         if self.dataset == 'ucf':
             loss_total2 = 0
-            epoch_losses = []       # 平均总loss（包含VTO）
+            epoch_losses = []       # 平均总loss
             epoch_ce_losses = []    # 平均CE
-            epoch_vto_losses = []   # 平均VTO
 
             for epoch in range(self.local_epochs):
                 normal_iter = iter(self.train_loaders[0])
@@ -69,7 +61,6 @@ class FedAvgClient:
 
                 loss_sum_total = 0.0
                 loss_sum_ce = 0.0
-                loss_sum_vto = 0.0
                 iters = 0
 
                 total_iters = min(len(self.train_loaders[0]), len(self.train_loaders[1]))
@@ -99,73 +90,43 @@ class FedAvgClient:
                         text_labels_raw, prompt_text, self.label_map, self.dataset
                     ).to(self.device)
 
-                    logits_out = self.model(
+                    logits = self.model(
                         visual_features,
                         prompt_text,
                         feat_lengths,
-                        is_training=True,
-                        neg_text=neg_prompt_text
+                        is_training=True
                     )
 
-                    if isinstance(logits_out, tuple):
-                        logits_pos, logits_neg = logits_out
-                    else:
-                        logits_pos, logits_neg = logits_out, None
-
                     # CE
-                    loss_ce = CLASM(logits_pos, text_labels, feat_lengths, self.device)
-
-                    # VTO
-                    if logits_neg is not None:
-                        loss_vto = VTOM(
-                            logits_pos, logits_neg, text_labels, feat_lengths, self.device,
-                            tau=self.vto_tau
-                        )
-                        loss = loss_ce + self.vto_weight * loss_vto
-                        vto_val = loss_vto.item()
-                    else:
-                        loss_vto = None
-                        loss = loss_ce
-                        vto_val = 0.0
+                    loss_ce = CLASM(logits, text_labels, feat_lengths, self.device)
+                    loss = loss_ce
 
                     loss_sum_total += loss.item()
                     loss_sum_ce += loss_ce.item()
-                    loss_sum_vto += vto_val
 
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
 
                     iters += 1
-                    if loss_vto is not None:
-                        pbar.set_postfix({
-                            'ce': f'{loss_ce.item():.4f}',
-                            'vto': f'{loss_vto.item():.4f}',
-                            'loss': f'{loss.item():.4f}'
-                        })
-                    else:
-                        pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+                    pbar.set_postfix({'loss': f'{loss.item():.4f}'})
 
                 avg_loss_epoch = loss_sum_total / iters
                 avg_ce_epoch = loss_sum_ce / iters
-                avg_vto_epoch = loss_sum_vto / iters
 
                 epoch_losses.append(avg_loss_epoch)
                 epoch_ce_losses.append(avg_ce_epoch)
-                epoch_vto_losses.append(avg_vto_epoch)
 
                 loss_total2 += avg_loss_epoch
 
                 print(
                     f'  Epoch {epoch+1}/{self.local_epochs} '
                     f'平均Loss: {avg_loss_epoch:.6f} | '
-                    f'CE: {avg_ce_epoch:.6f} | '
-                    f'VTO: {avg_vto_epoch:.6f}'
+                    f'CE: {avg_ce_epoch:.6f}'
                 )
 
             print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
             print(f'  所有Epoch CE  : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
-            print(f'  所有Epoch VTO : {[f"{loss:.6f}" for loss in epoch_vto_losses]}')
             print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
             return (self.get_global_parameters(), loss_total2,
@@ -175,12 +136,10 @@ class FedAvgClient:
             loss_total2 = 0
             epoch_losses = []
             epoch_ce_losses = []
-            epoch_vto_losses = []
 
             for epoch in range(self.local_epochs):
                 loss_sum_total = 0.0
                 loss_sum_ce = 0.0
-                loss_sum_vto = 0.0
                 iters = 0
 
                 try:
@@ -207,71 +166,42 @@ class FedAvgClient:
                         text_labels_raw, prompt_text, self.label_map, self.dataset
                     ).to(self.device)
 
-                    logits_out = self.model(
+                    logits = self.model(
                         visual_feat,
                         prompt_text,
                         feat_lengths,
-                        is_training=True,
-                        neg_text=neg_prompt_text
+                        is_training=True
                     )
 
-                    if isinstance(logits_out, tuple):
-                        logits_pos, logits_neg = logits_out
-                    else:
-                        logits_pos, logits_neg = logits_out, None
-
-                    loss_ce = CLASM(logits_pos, text_labels, feat_lengths, self.device)
-
-                    if logits_neg is not None:
-                        loss_vto = VTOM(
-                            logits_pos, logits_neg, text_labels, feat_lengths, self.device,
-                            tau=self.vto_tau
-                        )
-                        loss = loss_ce + self.vto_weight * loss_vto
-                        vto_val = loss_vto.item()
-                    else:
-                        loss_vto = None
-                        loss = loss_ce
-                        vto_val = 0.0
+                    loss_ce = CLASM(logits, text_labels, feat_lengths, self.device)
+                    loss = loss_ce
 
                     loss_sum_total += loss.item()
                     loss_sum_ce += loss_ce.item()
-                    loss_sum_vto += vto_val
 
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
 
                     iters += 1
-                    if loss_vto is not None:
-                        pbar.set_postfix({
-                            'ce': f'{loss_ce.item():.4f}',
-                            'vto': f'{loss_vto.item():.4f}',
-                            'loss': f'{loss.item():.4f}'
-                        })
-                    else:
-                        pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+                    pbar.set_postfix({'loss': f'{loss.item():.4f}'})
 
                 avg_loss_epoch = loss_sum_total / iters
                 avg_ce_epoch = loss_sum_ce / iters
-                avg_vto_epoch = loss_sum_vto / iters
 
                 epoch_losses.append(avg_loss_epoch)
                 epoch_ce_losses.append(avg_ce_epoch)
-                epoch_vto_losses.append(avg_vto_epoch)
 
                 loss_total2 += avg_loss_epoch
 
                 print(
                     f'  Epoch {epoch+1}/{self.local_epochs} '
                     f'平均Loss: {avg_loss_epoch:.6f} | '
-                    f'CE: {avg_ce_epoch:.6f} | '
-                    f'VTO: {avg_vto_epoch:.6f}'
+                    f'CE: {avg_ce_epoch:.6f}'
                 )
 
             print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
             print(f'  所有Epoch CE  : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
-            print(f'  所有Epoch VTO : {[f"{loss:.6f}" for loss in epoch_vto_losses]}')
             print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
             return (self.get_global_parameters(), loss_total2,
