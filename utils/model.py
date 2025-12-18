@@ -152,7 +152,7 @@ class Model(nn.Module):
         return visual_features
 
     def get_tokenized_classnames(self, classes):
-        prompts = [" ".join(["X"] * 4) + " " + name + "." for name in classes]
+        prompts = ["A surveillance video showing " + " ".join(["X"] * 4) + " " + name + "." for name in classes]
 
         tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts])
         with torch.no_grad():
