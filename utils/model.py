@@ -152,7 +152,7 @@ class Model(nn.Module):
         return visual_features
 
     def get_tokenized_classnames(self, classes):
-        prompts = ["A surveillance video showing " + " ".join(["X"] * 4) + " " + name + "." for name in classes]
+        prompts = [" ".join(["X"] * 4) + " " + name + "." for name in classes]
 
         tokenized_prompts = torch.cat([clip.tokenize(p) for p in prompts])
         with torch.no_grad():
@@ -196,22 +196,40 @@ class Model(nn.Module):
         
         return text_features
 
-    def forward(self, visual, text, lengths, is_training=True):
-        # ========== 单流架构 ==========
+    def forward(self, visual, text, lengths, is_training=True, neg_text=None):
+        """
+        单/双分支前向:
+            - 仅提供 text 时: 返回正分支 logits，用于训练/推理的原有流程
+            - 同时提供 text 与 neg_text 且 is_training=True 时:
+              返回 (logits_pos, logits_neg)
+        """
         # 1. 获取视觉特征
         visual_features = self.encode_video(visual)
         visual_features_norm = visual_features / visual_features.norm(dim=-1, keepdim=True)
-        
-        # 2. 获取文本特征
-        text_features = self.encode_text_prompt(text, visual_features)
-        
-        # 3. 扩展维度以匹配批次大小
-        text_features = text_features.unsqueeze(0).expand(
-            visual_features.shape[0], text_features.shape[0], text_features.shape[1])
-        text_features = text_features.permute(0, 2, 1)
-        
-        # 4. 计算logits
-        logits = visual_features_norm @ text_features.type(visual_features_norm.dtype)
-        logits = logits * self.clipmodel.logit_scale.exp()
-        
-        return logits
+
+        # 2. 正分支文本特征
+        text_features_pos = self.encode_text_prompt(text, visual_features)
+        text_features_pos = text_features_pos.unsqueeze(0).expand(
+            visual_features.shape[0], text_features_pos.shape[0], text_features_pos.shape[1]
+        )
+        text_features_pos = text_features_pos.permute(0, 2, 1)
+
+        # 3. 计算正分支 logits
+        logits_pos = visual_features_norm @ text_features_pos.type(visual_features_norm.dtype)
+        logits_pos = logits_pos * self.clipmodel.logit_scale.exp()
+
+        # 推理或未提供负分支文本时，仅返回正分支
+        if (neg_text is None) or (not is_training):
+            return logits_pos
+
+        # 4. 负分支文本特征（复用同一 PromptLearner）
+        text_features_neg = self.encode_text_prompt(neg_text, visual_features)
+        text_features_neg = text_features_neg.unsqueeze(0).expand(
+            visual_features.shape[0], text_features_neg.shape[0], text_features_neg.shape[1]
+        )
+        text_features_neg = text_features_neg.permute(0, 2, 1)
+
+        logits_neg = visual_features_norm @ text_features_neg.type(visual_features_norm.dtype)
+        logits_neg = logits_neg * self.clipmodel.logit_scale.exp()
+
+        return logits_pos, logits_neg

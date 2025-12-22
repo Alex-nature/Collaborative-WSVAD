@@ -48,6 +48,23 @@ def get_prompt_text(label_map: dict):
     return prompt_text
 
 
+def get_negative_prompt_text_ucf(pos_prompt_text):
+    """
+    根据 UCF 正分支的 prompt_text 构造负分支的类别名列表。
+
+    约定:
+        pos_prompt_text: ['normal', 'abuse', 'arrest', ..., 'vandalism']
+        返回:
+        neg_prompt_text: ['abnormal', 'no_abuse', 'no_arrest', ..., 'no_vandalism']
+    """
+    neg_prompt_text = ['abnormal']
+    for name in pos_prompt_text:
+        if name == 'normal':
+            continue
+        neg_prompt_text.append(f'no_{name}')
+    return neg_prompt_text
+
+
 def get_batch_mask(lengths, maxlen):
     batch_size = lengths.shape[0]
     mask = torch.empty(batch_size, maxlen)
@@ -128,3 +145,84 @@ def CLASM(logits, labels, lengths, device):
         instance_logits = torch.cat([instance_logits, torch.mean(tmp, 0, keepdim=True)], dim=0)
     milloss = -torch.mean(torch.sum(labels * F.log_softmax(instance_logits, dim=1), dim=1), dim=0)
     return milloss
+
+
+def NEG_LOSS_BCE(logits, labels, lengths, device):
+    """
+    负分支专用损失函数：
+    - 与 CLASM 一样，在时间维做 top-k 聚合得到视频级 logits
+    - 但在类别维度使用逐类二元交叉熵（BCE），不做 softmax
+
+    参数:
+        logits: [B, T, C_neg]  负分支的时序 logits
+        labels: [B, C_neg]     0/1 标签，表示每个负类对该视频是否“成立”
+        lengths: [B]           每个视频的有效长度
+        device: 设备字符串
+    """
+    instance_logits = torch.zeros(0).to(device)  # [0, C_neg]
+    labels = labels.to(device).float()
+
+    for i in range(logits.shape[0]):
+        valid_len = int(lengths[i].item())
+        # 防止长度太短导致 k=0，至少取 1
+        k = max(int(valid_len / 16 + 1), 1)
+        # 只在有效帧上做 top-k
+        tmp, _ = torch.topk(logits[i, 0:valid_len], k=k, largest=True, dim=0)  # [k, C_neg]
+        pooled = torch.mean(tmp, 0, keepdim=True)  # [1, C_neg]
+        instance_logits = torch.cat([instance_logits, pooled], dim=0)
+
+    loss = F.binary_cross_entropy_with_logits(instance_logits, labels)
+    return loss
+
+
+def get_batch_negative_label_ucf(texts, pos_prompt_text, neg_prompt_text, label_map):
+    """
+    为 UCF 构造负分支标签:
+        neg_prompt_text: ['abnormal', 'no_abuse', 'no_arrest', ..., 'no_vandalism']
+    规则:
+        - Normal 视频:
+            abnormal = 0
+            所有 no_xxx = 1
+        - 异常 e0 视频:
+            abnormal = 1
+            对发生的异常 e0:        no_e0 = 0
+            对未发生的其它异常 e:   no_e = 1
+    """
+    label_vectors = torch.zeros(0)
+
+    # 提取事件类名列表（不含 normal），并保证顺序与 neg_prompt_text 中一致
+    event_names = [name for name in pos_prompt_text if name != 'normal']
+
+    for text in texts:
+        label_vector = torch.zeros(len(neg_prompt_text))
+
+        if text == 'Normal':
+            # normal 视频
+            # abnormal = 0
+            label_vector[0] = 0
+            # 所有 no_xxx = 1
+            label_vector[1:] = 1
+        else:
+            # 单一异常事件
+            if text in label_map:
+                e_name = label_map[text]  # 映射到小写事件名，如 'Fighting' -> 'fighting'
+            else:
+                # 若找不到映射，保守起见视为 abnormal 且无特定事件
+                e_name = None
+
+            # abnormal = 1
+            label_vector[0] = 1
+
+            # 遍历事件名，对应到 neg_prompt_text 中的 no_xxx
+            for idx, ev_name in enumerate(event_names, start=1):
+                if e_name is not None and ev_name == e_name:
+                    # 实际发生的事件，其 no_xxx 应为 0
+                    label_vector[idx] = 0
+                else:
+                    # 未发生的其它事件，其 no_xxx 为 1
+                    label_vector[idx] = 1
+
+        label_vector = label_vector.unsqueeze(0)
+        label_vectors = torch.cat([label_vectors, label_vector], dim=0)
+
+    return label_vectors
