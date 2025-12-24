@@ -117,6 +117,7 @@ class Model(nn.Module):
 
         # 初始化提示学习器
         self.prompt_learner_pos = PromptLearner()
+        self.prompt_learner_neg = PromptLearner()
 
         # 初始化其他组件
         self.frame_position_embeddings = nn.Embedding(visual_length, visual_width)
@@ -196,6 +197,38 @@ class Model(nn.Module):
         
         return text_features
 
+    def encode_text_prompt_neg(self, text, visual):
+        """
+        负分支专用文本编码方法
+        """
+        classes = [name.replace("_", " ") for name in text]
+        class_tokens = torch.cat([clip.tokenize(p) for p in classes])
+        class_tokens = class_tokens.to(self.device)
+        with torch.no_grad():
+            class_features = self.clipmodel.encode_text_original(class_tokens)
+            class_features = class_features / class_features.norm(dim=-1, keepdim=True)
+
+        context_embedding = class_features
+        prompt_vectors, tokenized_prompts = self.get_tokenized_classnames(classes)
+
+        # 使用负分支专用PromptLearner
+        context = self.prompt_learner_neg(context_embedding, visual)
+
+        prompt_vectors = torch.cat(
+            [
+                prompt_vectors[:, :1],
+                context[0].unsqueeze(0).expand(prompt_vectors.shape[0], -1, -1),
+                prompt_vectors[:, 1 + context.shape[1]:],
+            ],
+            dim=1,
+        )
+
+        # 生成动态文本特征
+        text_features = self.clipmodel.encode_text(prompt_vectors, tokenized_prompts)
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+        return text_features
+
     def forward(self, visual, text, lengths, is_training=True, neg_text=None):
         """
         单/双分支前向:
@@ -222,8 +255,8 @@ class Model(nn.Module):
         if (neg_text is None) or (not is_training):
             return logits_pos
 
-        # 4. 负分支文本特征（复用同一 PromptLearner）
-        text_features_neg = self.encode_text_prompt(neg_text, visual_features)
+        # 4. 负分支文本特征（使用独立 PromptLearner）
+        text_features_neg = self.encode_text_prompt_neg(neg_text, visual_features)
         text_features_neg = text_features_neg.unsqueeze(0).expand(
             visual_features.shape[0], text_features_neg.shape[0], text_features_neg.shape[1]
         )

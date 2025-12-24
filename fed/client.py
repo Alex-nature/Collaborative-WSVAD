@@ -25,6 +25,7 @@ class FedAvgClient:
                  scheduler_milestones,
                  scheduler_rate,
                  device: str,
+                 neg_loss_weight: float = 1.0,
                  ):
         super().__init__()
         self.model = copy.deepcopy(model)
@@ -34,6 +35,8 @@ class FedAvgClient:
         self.local_epochs = local_epochs
         self.label_map = label_map
         self.device = device
+        # 负分支损失权重（用于控制 NEG_LOSS_BCE 的影响）
+        self.neg_loss_weight = neg_loss_weight
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=self.learning_rate)
@@ -120,7 +123,8 @@ class FedAvgClient:
                     # 负分支 BCE
                     loss_neg = NEG_LOSS_BCE(logits_neg, text_labels_neg, feat_lengths, self.device)
 
-                    loss = loss_ce + loss_neg
+                    # 合并损失：允许为负分支设置权重
+                    loss = loss_ce + self.neg_loss_weight * loss_neg
 
                     loss_sum_total += loss.item()
                     loss_sum_ce += loss_ce.item()

@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from utils import config
 from utils.dataset import XDDataset, UCFDataset
 from utils.model import Model
-from utils.tools import get_prompt_text
+from utils.tools import get_prompt_text, get_negative_prompt_text_ucf
 
 
 def inference(dataset, model, test_loader, gt, device):
@@ -24,6 +24,7 @@ def inference(dataset, model, test_loader, gt, device):
                           'B5': 'abuse', 'B6': 'car accident', 'G': 'explosion'})
 
     prompt_text = get_prompt_text(label_map)
+    neg_prompt_text = get_negative_prompt_text_ucf(prompt_text)
     with torch.no_grad():
         max_len = 256
         for i, item in enumerate(test_loader):
@@ -51,15 +52,29 @@ def inference(dataset, model, test_loader, gt, device):
                 else:
                     lengths[j] = length
             lengths = lengths.to(int)
-            logits2 = model(visual, prompt_text, lengths, is_training=False)
+
+            # 获取正负分支logits进行融合推理
+            logits_pos, logits_neg = model(visual, prompt_text, lengths, is_training=True, neg_text=neg_prompt_text)
 
             # 展平时间维
-            logits2 = logits2.reshape(logits2.shape[0] * logits2.shape[1], logits2.shape[2])
+            logits_pos = logits_pos.reshape(logits_pos.shape[0] * logits_pos.shape[1], logits_pos.shape[2])
+            logits_neg = logits_neg.reshape(logits_neg.shape[0] * logits_neg.shape[1], logits_neg.shape[2])
 
-            # 获取 normal 置信度 -> 1 - P(normal)
-            probs = logits2[0:len_cur].softmax(dim=-1)
+            # 计算异常分数
+            probs_pos = logits_pos[0:len_cur].softmax(dim=-1)  # 正分支：多类别 -> softmax
+            probs_neg = logits_neg[0:len_cur].sigmoid()        # 负分支：多标签 -> sigmoid
+
             normal_idx = prompt_text.index('normal')
-            prob2 = (1 - probs[:, normal_idx]).squeeze(-1)
+            abnormal_idx = 0  # neg_prompt_text[0] = 'abnormal'
+
+            # 正分支异常分数：1 - P(normal)
+            anomaly_score_pos = (1 - probs_pos[:, normal_idx]).squeeze(-1)
+
+            # 负分支异常分数：P(abnormal)
+            anomaly_score_neg = probs_neg[:, abnormal_idx].squeeze(-1)
+
+            # Weighted融合：70%正分支 + 30%负分支
+            prob2 = 0.7 * anomaly_score_pos + 0.3 * anomaly_score_neg
 
             if i == 0:
                 ap2 = prob2
