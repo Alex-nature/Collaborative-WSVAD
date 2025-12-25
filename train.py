@@ -65,6 +65,9 @@ if __name__ == "__main__":
         tca_norm=args.tca_norm
     ).to(device)
 
+    # 初始化正负分支PromptLearner分离
+    model.initialize_separate_prompt_learners()
+
     if args.load_model == 1:
         checkpoint = torch.load(args.checkpoint)
         model.load_state_dict(checkpoint)
