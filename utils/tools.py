@@ -48,22 +48,30 @@ def get_prompt_text(label_map: dict):
     return prompt_text
 
 
-def get_negative_prompt_text_ucf(pos_prompt_text):
+# 构造负提示：按已有 label_map 的 value 生成对应否定文本
+def build_negative_prompts(label_map: dict):
     """
-    根据 UCF 正分支的 prompt_text 构造负分支的类别名列表。
-
-    约定:
-        pos_prompt_text: ['normal', 'abuse', 'arrest', ..., 'vandalism']
-        返回:
-        neg_prompt_text: ['abnormal', 'no_abuse', 'no_arrest', ..., 'no_vandalism']
+    输入: label_map (如 {"Abuse": "abuse", "Normal": "normal"})
+    输出:
+        neg_prompt_text: 与 label_map 顺序一致的负提示列表
+        neg_label_map: {原始key: 负提示字符串}
+    规则:
+        - 对 normal/normal-like 使用 "abnormal"
+        - 其他类别使用 "no {label_value}"
     """
-    neg_prompt_text = ['abnormal']
-    for name in pos_prompt_text:
-        if name == 'normal':
-            continue
-        neg_prompt_text.append(f'no_{name}')
-    return neg_prompt_text
+    neg_prompt_text = []
+    neg_label_map = {}
 
+    for k, v in label_map.items():
+        v_lower = v.lower()
+        if v_lower in ["normal"]:
+            neg_text = "abnormal"
+        else:
+            neg_text = f"no {v_lower}"
+        neg_prompt_text.append(neg_text)
+        neg_label_map[k] = neg_text
+
+    return neg_prompt_text, neg_label_map
 
 def get_batch_mask(lengths, maxlen):
     batch_size = lengths.shape[0]
@@ -147,82 +155,99 @@ def CLASM(logits, labels, lengths, device):
     return milloss
 
 
-def NEG_LOSS_BCE(logits, labels, lengths, device):
+
+def VTOM_multi_hot(
+    logits_yes: torch.Tensor,  # [B, T, C]
+    logits_no: torch.Tensor,   # [B, T, C]
+    labels: torch.Tensor,      # [B, C]  one-hot (UCF) or multi-hot (XD)
+    lengths: torch.Tensor,     # [B]
+    device,
+    eps: float = 1e-6,
+    tau: float = 10.0,
+):
     """
-    负分支专用损失函数：
-    - 与 CLASM 一样，在时间维做 top-k 聚合得到视频级 logits
-    - 但在类别维度使用逐类二元交叉熵（BCE），不做 softmax
+    Multi-hot generalized VTO loss (B plan):
+    - P_no = sigmoid((logits_no - logits_yes)/tau)
+    - low-K MIL pooling over time
+    - penalize only negative classes (classes not present in labels)
+    - normalize by #negative classes per sample (C - #pos), which reduces to (C-1) for one-hot.
+    """
+    logits_yes = logits_yes.to(device)
+    logits_no  = logits_no.to(device)
+    labels     = labels.to(device)
+
+    # Binary positives for mask logic (IMPORTANT for multi-hot)
+    labels_bin = (labels > 0).float()          # [B, C]
+    neg_mask   = 1.0 - labels_bin              # [B, C]
+
+    # Eq.(9) stable form (with tau softening)
+    P_no = torch.sigmoid((logits_no - logits_yes) / tau)  # [B, T, C]
+
+    B, T, C = P_no.shape
+    lengths_cpu = lengths.detach().to("cpu")
+
+    # low-K pooling per sample
+    pno_list = []
+    for i in range(B):
+        L = int(lengths_cpu[i])
+        L = max(1, min(L, T))                 # guard
+        K = int(L / 16 + 1)                   # 使用给定的k值
+        lowk_vals, _ = torch.topk(P_no[i, :L], k=K, largest=False, dim=0)  # [K, C]
+        pno_list.append(lowk_vals.mean(dim=0))                              # [C]
+
+    instance_pno = torch.stack(pno_list, dim=0)  # [B, C]
+
+    # loss: only negatives contribute
+    log_pno = torch.log(instance_pno.clamp_min(eps))  # [B, C]
+
+    # normalize by number of negatives per sample: C - #pos
+    denom = neg_mask.sum(dim=1, keepdim=True).clamp_min(1.0)  # [B, 1]
+
+    loss_per_sample = -((neg_mask * log_pno).sum(dim=1, keepdim=True) / denom)  # [B, 1]
+
+    return loss_per_sample.mean()
+
+
+def NEG_LOSS_BCE(logits_pos, logits_neg, labels, lengths, device, tau=10.0):
+    """
+    负分支专用损失函数：基于VTOM_multi_hot的改进版本
 
     参数:
-        logits: [B, T, C_neg]  负分支的时序 logits
-        labels: [B, C_neg]     0/1 标签，表示每个负类对该视频是否“成立”
+        logits_pos: [B, T, C]  正分支的时序 logits
+        logits_neg: [B, T, C]  负分支的时序 logits
+        labels: [B, C]         标签（正分支标签，用于确定负类别）
         lengths: [B]           每个视频的有效长度
-        device: 设备字符串
+        device: 设备
+        tau: 温度参数
     """
-    instance_logits = torch.zeros(0).to(device)  # [0, C_neg]
-    labels = labels.to(device).float()
-
-    for i in range(logits.shape[0]):
-        valid_len = int(lengths[i].item())
-        # 防止长度太短导致 k=0，至少取 1
-        k = max(int(valid_len / 16 + 1), 1)
-        # 只在有效帧上做 top-k
-        tmp, _ = torch.topk(logits[i, 0:valid_len], k=k, largest=True, dim=0)  # [k, C_neg]
-        pooled = torch.mean(tmp, 0, keepdim=True)  # [1, C_neg]
-        instance_logits = torch.cat([instance_logits, pooled], dim=0)
-
-    loss = F.binary_cross_entropy_with_logits(instance_logits, labels)
-    return loss
+    return VTOM_multi_hot(logits_pos, logits_neg, labels, lengths, device, tau=tau)
 
 
-def get_batch_negative_label_ucf(texts, pos_prompt_text, neg_prompt_text, label_map):
+def text_branch_regularization(T_yes: torch.Tensor, T_no: torch.Tensor, reg_lambda: float = 0.1) -> torch.Tensor:
     """
-    为 UCF 构造负分支标签:
-        neg_prompt_text: ['abnormal', 'no_abuse', 'no_arrest', ..., 'no_vandalism']
-    规则:
-        - Normal 视频:
-            abnormal = 0
-            所有 no_xxx = 1
-        - 异常 e0 视频:
-            abnormal = 1
-            对发生的异常 e0:        no_e0 = 0
-            对未发生的其它异常 e:   no_e = 1
+    TO loss first term: 正负分支文本特征余弦相似度正则化
+
+    (1/C) * sum_i [ cos(T_yes[i], T_no[i]) ]_+
+
+    where [x]_+ = max(0, x).
+
+    Args:
+        T_yes: [C, D] tensor, yes text embeddings (one per class)
+        T_no : [C, D] tensor, no  text embeddings (one per class)
+        reg_lambda: 正则化强度系数 (默认0.1)
+
+    Returns:
+        scalar tensor
     """
-    label_vectors = torch.zeros(0)
+    if T_yes.shape != T_no.shape:
+        raise ValueError(f"T_yes and T_no must have same shape, got {T_yes.shape} vs {T_no.shape}")
+    if T_yes.dim() != 2:
+        raise ValueError(f"Expected [C, D], got dim={T_yes.dim()}")
 
-    # 提取事件类名列表（不含 normal），并保证顺序与 neg_prompt_text 中一致
-    event_names = [name for name in pos_prompt_text if name != 'normal']
+    # cosine similarity for each class i (paired row-wise)
+    cos_sim = F.cosine_similarity(T_yes, T_no, dim=1)  # [C]
 
-    for text in texts:
-        label_vector = torch.zeros(len(neg_prompt_text))
+    # [x]_+ = ReLU(x)
+    loss = F.relu(cos_sim).mean()  # mean over C equals (1/C) sum
 
-        if text == 'Normal':
-            # normal 视频
-            # abnormal = 0
-            label_vector[0] = 0
-            # 所有 no_xxx = 1
-            label_vector[1:] = 1
-        else:
-            # 单一异常事件
-            if text in label_map:
-                e_name = label_map[text]  # 映射到小写事件名，如 'Fighting' -> 'fighting'
-            else:
-                # 若找不到映射，保守起见视为 abnormal 且无特定事件
-                e_name = None
-
-            # abnormal = 1
-            label_vector[0] = 1
-
-            # 遍历事件名，对应到 neg_prompt_text 中的 no_xxx
-            for idx, ev_name in enumerate(event_names, start=1):
-                if e_name is not None and ev_name == e_name:
-                    # 实际发生的事件，其 no_xxx 应为 0
-                    label_vector[idx] = 0
-                else:
-                    # 未发生的其它事件，其 no_xxx 为 1
-                    label_vector[idx] = 1
-
-        label_vector = label_vector.unsqueeze(0)
-        label_vectors = torch.cat([label_vectors, label_vector], dim=0)
-
-    return label_vectors
+    return reg_lambda * loss
