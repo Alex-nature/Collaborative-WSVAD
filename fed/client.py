@@ -27,6 +27,7 @@ class FedAvgClient:
                  scheduler_milestones,
                  scheduler_rate,
                  device: str,
+                 log_file: str = None,
                  ):
         super().__init__()
         self.model = copy.deepcopy(model)
@@ -36,11 +37,23 @@ class FedAvgClient:
         self.local_epochs = local_epochs
         self.label_map = label_map
         self.device = device
+        self.log_file = log_file
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=self.learning_rate)
         self.scheduler = MultiStepLR(
             self.optimizer, scheduler_milestones, scheduler_rate)
+
+    def log_message(self, message: str):
+        """记录消息到控制台和日志文件"""
+        print(message)
+        if self.log_file:
+            try:
+                os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+                with open(self.log_file, 'a', encoding='utf-8') as f:
+                    f.write(message + '\n')
+            except Exception as e:
+                print(f"Warning: Failed to write to log file {self.log_file}: {e}")
 
     def set_parameters(self, new_params):
         state_dict = self.model.state_dict()
@@ -145,17 +158,17 @@ class FedAvgClient:
 
                 loss_total2 += avg_loss_epoch
 
-                print(
+                self.log_message(
                     f'  Epoch {epoch+1}/{self.local_epochs} '
                     f'平均Loss: {avg_loss_epoch:.6f} | '
                     f'CE: {avg_ce_epoch:.6f} | '
                     f'NEG_BCE: {avg_neg_epoch:.6f}'
                 )
 
-            print(f'  所有Epoch Loss     : {[f"{loss:.6f}" for loss in epoch_losses]}')
-            print(f'  所有Epoch CE      : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
-            print(f'  所有Epoch NEG_BCE : {[f"{loss:.6f}" for loss in epoch_neg_losses]}')
-            print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
+            self.log_message(f'  所有Epoch Loss     : {[f"{loss:.6f}" for loss in epoch_losses]}')
+            self.log_message(f'  所有Epoch CE      : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
+            self.log_message(f'  所有Epoch NEG_BCE : {[f"{loss:.6f}" for loss in epoch_neg_losses]}')
+            self.log_message(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
             return (self.get_global_parameters(), loss_total2,
                     len(self.train_loaders[0]) + len(self.train_loaders[1]))
@@ -238,17 +251,17 @@ class FedAvgClient:
 
                 loss_total2 += avg_loss_epoch
 
-                print(
+                self.log_message(
                     f'  Epoch {epoch+1}/{self.local_epochs} '
                     f'平均Loss: {avg_loss_epoch:.6f} | '
                     f'CE: {avg_ce_epoch:.6f} | '
                     f'NEG_BCE: {avg_neg_epoch:.6f}'
                 )
 
-            print(f'  所有Epoch Loss     : {[f"{loss:.6f}" for loss in epoch_losses]}')
-            print(f'  所有Epoch CE      : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
-            print(f'  所有Epoch NEG_BCE : {[f"{loss:.6f}" for loss in epoch_neg_losses]}')
-            print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
+            self.log_message(f'  所有Epoch Loss     : {[f"{loss:.6f}" for loss in epoch_losses]}')
+            self.log_message(f'  所有Epoch CE      : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
+            self.log_message(f'  所有Epoch NEG_BCE : {[f"{loss:.6f}" for loss in epoch_neg_losses]}')
+            self.log_message(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
             return (self.get_global_parameters(), loss_total2,
                     len(self.train_loaders))

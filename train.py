@@ -32,6 +32,9 @@ if __name__ == "__main__":
     path = os.path.join('save', dir_name)
     os.makedirs(path, exist_ok=True)
 
+    # 创建训练日志文件路径
+    log_file = os.path.join(path, 'training.log')
+
     with open(os.path.join(path, 'README.txt'), 'w') as f:
         for key, value in args.__dict__.items():
             print(f'{key}: {value}', file=f)
@@ -73,7 +76,7 @@ if __name__ == "__main__":
         server = FedAvgServer(args.dataset, train_loaders, test_loader, args.clients_num,
                               args.global_rounds, args.local_epochs, args.learning_rate,
                               args.split_mode, args.scheduler_milestones, args.scheduler_rate,
-                              device, model)
+                              device, model, log_file)
         best_score = server.train(path)
         
         # 确保best_score是有效的数值

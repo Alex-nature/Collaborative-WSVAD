@@ -14,6 +14,7 @@ class BaseServer:
                  global_rounds: int,
                  local_epochs: int,
                  model,
+                 log_file: str = None,
                  ):
         super().__init__()
         self.clients = []
@@ -27,6 +28,7 @@ class BaseServer:
         self.local_weights = []
         self.local_losses = []
         self.len_dataset = []
+        self.log_file = log_file
 
 
 class FedAvgServer(BaseServer):
@@ -41,10 +43,11 @@ class FedAvgServer(BaseServer):
                  scheduler_milestones,
                  scheduler_rate,
                  device,
-                 model
+                 model,
+                 log_file: str = None
                  ):
         super().__init__(dataset, train_loaders, test_loader,
-                         clients_num, global_rounds, local_epochs, model)
+                         clients_num, global_rounds, local_epochs, model, log_file)
         self.dataset = dataset
         self.train_loaders = train_loaders
         self.test_loader = test_loader
@@ -71,7 +74,7 @@ class FedAvgServer(BaseServer):
 
             client = FedAvgClient(model, learning_rate, train_loaders[i], dataset,
                                   local_epochs, label_map, scheduler_milestones,
-                                  scheduler_rate, device)
+                                  scheduler_rate, device, self.log_file)
 
             self.clients.append(client)
 
