@@ -9,6 +9,8 @@ from utils.tools import (
     NEG_LOSS_BCE,
     get_negative_prompt_text_ucf,
     get_batch_negative_label_ucf,
+    get_negative_prompt_text_xd,
+    get_batch_negative_label_xd,
 )
 from tqdm import tqdm
 import os
@@ -57,7 +59,7 @@ class FedAvgClient:
         self.model.train()
         prompt_text = get_prompt_text(self.label_map)
         # 为 UCF 构造负分支类别
-        neg_prompt_text = get_negative_prompt_text_ucf(prompt_text)
+        neg_prompt_text = get_negative_prompt_text_ucf(prompt_text) if self.dataset == 'ucf' else get_negative_prompt_text_xd(prompt_text)
 
         if self.dataset == 'ucf':
             loss_total2 = 0
@@ -160,12 +162,14 @@ class FedAvgClient:
 
         elif self.dataset == 'xd':
             loss_total2 = 0
-            epoch_losses = []
-            epoch_ce_losses = []
+            epoch_losses = []       # 平均总loss
+            epoch_ce_losses = []    # 平均正分支CE
+            epoch_neg_losses = []   # 平均负分支BCE
 
             for epoch in range(self.local_epochs):
                 loss_sum_total = 0.0
                 loss_sum_ce = 0.0
+                loss_sum_neg = 0.0
                 iters = 0
 
                 try:
@@ -192,18 +196,30 @@ class FedAvgClient:
                         text_labels_raw, prompt_text, self.label_map, self.dataset
                     ).to(self.device)
 
-                    logits = self.model(
+                    # 负分支标签
+                    text_labels_neg = get_batch_negative_label_xd(
+                        text_labels_raw, prompt_text, neg_prompt_text, self.label_map
+                    ).to(self.device)
+
+                    # 模型前向：正/负双分支
+                    logits_pos, logits_neg = self.model(
                         visual_feat,
                         prompt_text,
                         feat_lengths,
-                        is_training=True
+                        is_training=True,
+                        neg_text=neg_prompt_text,
                     )
 
-                    loss_ce = CLASM(logits, text_labels, feat_lengths, self.device)
-                    loss = loss_ce
+                    # 正分支 CE (CLASM)
+                    loss_ce = CLASM(logits_pos, text_labels, feat_lengths, self.device)
+                    # 负分支 BCE
+                    loss_neg = NEG_LOSS_BCE(logits_neg, text_labels_neg, feat_lengths, self.device)
+
+                    loss = loss_ce + loss_neg
 
                     loss_sum_total += loss.item()
                     loss_sum_ce += loss_ce.item()
+                    loss_sum_neg += loss_neg.item()
 
                     self.optimizer.zero_grad()
                     loss.backward()
@@ -214,20 +230,24 @@ class FedAvgClient:
 
                 avg_loss_epoch = loss_sum_total / iters
                 avg_ce_epoch = loss_sum_ce / iters
+                avg_neg_epoch = loss_sum_neg / iters
 
                 epoch_losses.append(avg_loss_epoch)
                 epoch_ce_losses.append(avg_ce_epoch)
+                epoch_neg_losses.append(avg_neg_epoch)
 
                 loss_total2 += avg_loss_epoch
 
                 print(
                     f'  Epoch {epoch+1}/{self.local_epochs} '
                     f'平均Loss: {avg_loss_epoch:.6f} | '
-                    f'CE: {avg_ce_epoch:.6f}'
+                    f'CE: {avg_ce_epoch:.6f} | '
+                    f'NEG_BCE: {avg_neg_epoch:.6f}'
                 )
 
-            print(f'  所有Epoch Loss: {[f"{loss:.6f}" for loss in epoch_losses]}')
-            print(f'  所有Epoch CE  : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
+            print(f'  所有Epoch Loss     : {[f"{loss:.6f}" for loss in epoch_losses]}')
+            print(f'  所有Epoch CE      : {[f"{loss:.6f}" for loss in epoch_ce_losses]}')
+            print(f'  所有Epoch NEG_BCE : {[f"{loss:.6f}" for loss in epoch_neg_losses]}')
             print(f'  总体平均Loss: {loss_total2/self.local_epochs:.6f}')
 
             return (self.get_global_parameters(), loss_total2,
