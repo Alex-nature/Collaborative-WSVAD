@@ -29,7 +29,7 @@ class FedAvgClient:
         self.device = device
 
         # 负分支损失权重（可调）
-        self.vto_weight = 0.05
+        self.vto_weight = 0
         # 负分支温度参数（防止sigmoid饱和导致VTO过快趋近0）
         self.vto_tau = 10  # 常用 5~20；先用10比较稳
 
@@ -54,8 +54,8 @@ class FedAvgClient:
     def train(self):
         self.model.train()
         prompt_text = get_prompt_text(self.label_map)
-        neg_prompt_text, _ = build_negative_prompts(self.label_map)
-        # neg_prompt_text = None
+        # neg_prompt_text, _ = build_negative_prompts(self.label_map)
+        neg_prompt_text = None
 
         if self.dataset == 'ucf':
             loss_total2 = 0
