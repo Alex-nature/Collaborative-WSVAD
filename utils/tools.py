@@ -223,18 +223,19 @@ def NEG_LOSS_BCE(logits_pos, logits_neg, labels, lengths, device, tau=10.0):
     return VTOM_multi_hot(logits_pos, logits_neg, labels, lengths, device, tau=tau)
 
 
-def text_branch_regularization(T_yes: torch.Tensor, T_no: torch.Tensor, reg_lambda: float = 0.1) -> torch.Tensor:
+def text_branch_regularization(T_yes: torch.Tensor, T_no: torch.Tensor, reg_lambda: float = 0.1, temperature: float = 0.1) -> torch.Tensor:
     """
-    TO loss first term: 正负分支文本特征余弦相似度正则化
+    TO loss first term: 正负分支文本特征余弦相似度正则化 (优化版)
 
-    (1/C) * sum_i [ cos(T_yes[i], T_no[i]) ]_+
+    使用平滑激活函数和温度参数的组合优化版本
 
-    where [x]_+ = max(0, x).
+    公式: λ × (1/C) × Σᵢ softplus( cos(T_yes[i], T_no[i]) / τ )
 
     Args:
         T_yes: [C, D] tensor, yes text embeddings (one per class)
         T_no : [C, D] tensor, no  text embeddings (one per class)
         reg_lambda: 正则化强度系数 (默认0.1)
+        temperature: 温度参数，控制相似度敏感度 (默认0.1)
 
     Returns:
         scalar tensor
@@ -247,7 +248,10 @@ def text_branch_regularization(T_yes: torch.Tensor, T_no: torch.Tensor, reg_lamb
     # cosine similarity for each class i (paired row-wise)
     cos_sim = F.cosine_similarity(T_yes, T_no, dim=1)  # [C]
 
-    # [x]_+ = ReLU(x)
-    loss = F.relu(cos_sim).mean()  # mean over C equals (1/C) sum
+    # 温度缩放：控制相似度对角度变化的敏感度
+    scaled_sim = cos_sim / temperature
+
+    # 使用Softplus替代ReLU：平滑的近似ReLU，避免梯度消失
+    loss = F.softplus(scaled_sim, beta=1.0).mean()  # mean over C equals (1/C) sum
 
     return reg_lambda * loss
