@@ -4,7 +4,7 @@ parser = argparse.ArgumentParser()
 # 你好
 parser.add_argument("--dataset", type=str, default="ucf", choices=["ucf", "xd"])
 parser.add_argument("--batch_size", type=int, default=64, help="batch size")
-parser.add_argument("--learning_rate", type=float, default=1e-4, help="Local learning rate")
+parser.add_argument("--learning_rate", type=float, default=2e-4, help="Local learning rate")
 parser.add_argument("--global_rounds", type=int, default=20, help="Global federated learning rounds")
 parser.add_argument("--local_epochs", type=int, default=10, help="local training epochs for each client")
 parser.add_argument("--algorithm", type=str, default="FedAvg", choices=["FedAvg", "FedProx", "Scaffold"])
