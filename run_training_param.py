@@ -2,14 +2,12 @@ import subprocess
 import sys
 from datetime import datetime
 
-# ✅ 新增：UCF 窗口大小参数实验列表
-# window_sizes = [4, 8, 16, 32, 64, 128]
-window_sizes = [4, 8, 16, 64, 128]
+# ✅ UCF / XD 窗口大小参数实验列表
+window_sizes = [4, 8, 16, 32, 64, 128]
 
 
-# 定义所有训练命令
-commands = [
-    # XD 数据集任务
+# ✅ 先定义 XD 的 3 个基础任务（不带 window_size）
+xd_base_tasks = [
     {
         "name": "xd event",
         "dataset": "xd",
@@ -27,7 +25,7 @@ commands = [
     },
 ]
 
-# ✅ 最小改动：把原来的 3 个 UCF 任务展开为 3 x 6 个（window_sizes）
+# ✅ UCF 的 3 个基础任务（不带 window_size）
 ucf_base_tasks = [
     {
         "name": "ucf event",
@@ -46,6 +44,19 @@ ucf_base_tasks = [
     }
 ]
 
+# ✅ 最小改动：commands 里放展开后的任务
+commands = []
+
+# ✅ XD：3 x 6 展开
+for ws in window_sizes:
+    for task in xd_base_tasks:
+        commands.append({
+            "name": f'{task["name"]} tca_window={ws}',
+            "dataset": task["dataset"],
+            "cmd": task["cmd"] + ["--tca_window_size", str(ws)]
+        })
+
+# ✅ UCF：3 x 6 展开（保持你原来的逻辑）
 for ws in window_sizes:
     for task in ucf_base_tasks:
         commands.append({
