@@ -10,6 +10,35 @@ from torch.utils.data import DataLoader
 sys.path.append(os.path.dirname(__file__))
 from utils.tools import process_feat, process_split
 
+class ShanghaiDataset(data.Dataset):
+    def __init__(self, clip_dim: int, file_path: str, test_mode: bool):
+        self.df = pd.read_csv(file_path)
+        self.clip_dim = clip_dim
+        self.test_mode = test_mode
+        self.base_path = './data'
+
+    def __len__(self):
+        return self.df.shape[0]
+
+    def __getitem__(self, index):
+        original_path = self.df.loc[index]['path']
+
+        if original_path.startswith('/data'):
+            feature_path = original_path.replace('/data', self.base_path)
+        else:
+            feature_path = original_path
+
+        clip_feature = np.load(feature_path)
+
+        if not self.test_mode:
+            clip_feature, clip_length = process_feat(clip_feature, self.clip_dim)
+        else:
+            clip_feature, clip_length = process_split(clip_feature, self.clip_dim)
+
+        clip_feature = torch.tensor(clip_feature)
+        clip_label = self.df.loc[index]['label']
+
+        return clip_feature, clip_label, clip_length, original_path
 
 class UCFDataset(data.Dataset):
     def __init__(self, clip_dim: int, file_path: str, test_mode: bool, normal: bool = False):
