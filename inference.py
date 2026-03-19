@@ -85,7 +85,7 @@ def inference(dataset, model, test_loader, gt, device):
                 score_neg = torch.zeros_like(score_pos)
 
             # 融合：alpha 可调（0~1）
-            alpha = 1.0
+            alpha = 0.9
             fused_score = alpha * score_pos + (1.0 - alpha) * score_neg  # [L]
             prob2 = fused_score
 

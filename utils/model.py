@@ -95,7 +95,7 @@ class Model(nn.Module):
 
         # 初始化视觉编码器 - 根据配置选择TCA或标准Transformer
         if use_tca:
-            print("\n🌊 使用TCA (Temporal Context Aggregation) 时序编码器")
+            print("\nUsing TCA (Temporal Context Aggregation) temporal encoder")
             self.temporal = TCATransformerEncoder(
                 width=visual_width,        # 例如 512
                 layers=visual_layers,
@@ -108,7 +108,7 @@ class Model(nn.Module):
                 use_norm=tca_norm
             )
         else:
-            print("\n⚡ 使用标准Transformer时序编码器")
+            print("\nUsing standard Transformer temporal encoder")
             self.temporal = TransformerEncoder(
                 width=visual_width,
                 layers=visual_layers,
@@ -265,8 +265,15 @@ class Model(nn.Module):
         logits_pos = visual_features_norm @ text_features_pos.type(visual_features_norm.dtype)
         logits_pos = logits_pos * self.clipmodel.logit_scale.exp()
 
+        # # 推理或未提供负分支文本时，仅返回正分支
+        # if (neg_text is None) or (not is_training):
+        #     if return_text_features:
+        #         return logits_pos, text_features_pos_raw
+        #     else:
+        #         return logits_pos
+
         # 推理或未提供负分支文本时，仅返回正分支
-        if (neg_text is None) or (not is_training):
+        if neg_text is None:
             if return_text_features:
                 return logits_pos, text_features_pos_raw
             else:
