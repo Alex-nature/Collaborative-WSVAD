@@ -1,0 +1,26 @@
+{
+  "experiments": [
+    {
+      "name": "ucf_event",
+      "dataset": "ucf",
+      "split_mode": "event",
+      "checkpoint": "PAMP-FedVAD/models/ucf-event_model_roc_0.8797.pth",
+      "member_sources": [
+        "data/list/ucf_event"
+      ],
+      "nonmember_source": "data/list/ucf_test.csv",
+      "output_manifest": "mia/manifests/membership_manifest_ucf_event.csv"
+    },
+    {
+      "name": "xd_event",
+      "dataset": "xd",
+      "split_mode": "event",
+      "checkpoint": "PAMP-FedVAD/models/xd-event_model_final_ap_0.8243.pth",
+      "member_sources": [
+        "data/list/xd_event"
+      ],
+      "nonmember_source": "data/list/xd_test.csv",
+      "output_manifest": "mia/manifests/membership_manifest_xd_event.csv"
+    }
+  ]
+}
