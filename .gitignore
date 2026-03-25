@@ -7,3 +7,6 @@ experiments/
 md/
 pdf/
 PAMP-FedVAD/
+mia/models
+mia/features
+mia/results

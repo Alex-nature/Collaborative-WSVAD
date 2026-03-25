@@ -8,10 +8,10 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score, roc_curve
+from sklearn.metrics import accuracy_score, f1_score, top_k_accuracy_score
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 
 ID_COLUMNS = {
@@ -26,21 +26,22 @@ ID_COLUMNS = {
     "client_id",
     "sampling_source",
     "origin_sample_id",
+    "group_id",
 }
 
-LABEL_COLUMN = "membership"
+LABEL_COLUMN = "client_id"
+MEMBERSHIP_COLUMN = "membership"
 GROUP_COLUMN = "group_id"
 
 
 def load_feature_table(csv_path: Path):
-    df = pd.read_csv(csv_path)
-    return df
+    return pd.read_csv(csv_path, low_memory=False)
 
 
 def select_feature_columns(df: pd.DataFrame):
     feature_columns = []
     for col in df.columns:
-        if col == LABEL_COLUMN or col in ID_COLUMNS:
+        if col in ID_COLUMNS or col == MEMBERSHIP_COLUMN:
             continue
         if pd.api.types.is_numeric_dtype(df[col]):
             feature_columns.append(col)
@@ -49,65 +50,21 @@ def select_feature_columns(df: pd.DataFrame):
     return feature_columns
 
 
-def compute_tpr_at_fpr(y_true, y_score, target_fpr):
-    fpr, tpr, _ = roc_curve(y_true, y_score)
-    valid = np.where(fpr <= target_fpr)[0]
-    if len(valid) == 0:
-        return 0.0
-    return float(np.max(tpr[valid]))
-
-
 def group_split(df: pd.DataFrame, test_size: float, val_size: float, seed: int):
     groups = df[GROUP_COLUMN].astype(str)
-    y = df[LABEL_COLUMN].astype(int)
-
     first_split = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
-    trainval_idx, test_idx = next(first_split.split(df, y=y, groups=groups))
+    trainval_idx, test_idx = next(first_split.split(df, groups=groups))
 
     trainval_df = df.iloc[trainval_idx].reset_index(drop=True)
     test_df = df.iloc[test_idx].reset_index(drop=True)
 
     trainval_groups = trainval_df[GROUP_COLUMN].astype(str)
-    trainval_y = trainval_df[LABEL_COLUMN].astype(int)
     second_split = GroupShuffleSplit(n_splits=1, test_size=val_size, random_state=seed)
-    train_idx, val_idx = next(second_split.split(trainval_df, y=trainval_y, groups=trainval_groups))
+    train_idx, val_idx = next(second_split.split(trainval_df, groups=trainval_groups))
 
     train_df = trainval_df.iloc[train_idx].reset_index(drop=True)
     val_df = trainval_df.iloc[val_idx].reset_index(drop=True)
     return train_df, val_df, test_df
-
-
-def oversample_minority_train(df: pd.DataFrame, seed: int):
-    counts = df[LABEL_COLUMN].value_counts()
-    if len(counts) != 2 or counts.iloc[0] == counts.iloc[1]:
-        return df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-
-    majority_label = counts.idxmax()
-    minority_label = counts.idxmin()
-    majority_df = df[df[LABEL_COLUMN] == majority_label]
-    minority_df = df[df[LABEL_COLUMN] == minority_label]
-
-    sampled_minority = minority_df.sample(
-        n=len(majority_df),
-        replace=True,
-        random_state=seed,
-    )
-    balanced = pd.concat([majority_df, sampled_minority], axis=0)
-    balanced = balanced.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    return balanced
-
-
-def evaluate_predictions(y_true, y_score, threshold=0.5):
-    y_pred = (y_score >= threshold).astype(int)
-    return {
-        "auc": float(roc_auc_score(y_true, y_score)),
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
-        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
-        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
-        "tpr_at_fpr_1pct": compute_tpr_at_fpr(y_true, y_score, 0.01),
-        "tpr_at_fpr_5pct": compute_tpr_at_fpr(y_true, y_score, 0.05),
-    }
 
 
 def build_lr_pipeline():
@@ -118,8 +75,9 @@ def build_lr_pipeline():
             (
                 "model",
                 LogisticRegression(
-                    max_iter=2000,
+                    max_iter=3000,
                     solver="lbfgs",
+                    multi_class="multinomial",
                     class_weight="balanced",
                     random_state=20260319,
                 ),
@@ -135,10 +93,8 @@ def build_rf_pipeline():
             (
                 "model",
                 RandomForestClassifier(
-                    n_estimators=300,
+                    n_estimators=400,
                     max_depth=None,
-                    min_samples_split=2,
-                    min_samples_leaf=1,
                     class_weight="balanced",
                     random_state=20260319,
                     n_jobs=-1,
@@ -146,6 +102,18 @@ def build_rf_pipeline():
             ),
         ]
     )
+
+
+def evaluate_multiclass(y_true, y_score, labels):
+    y_pred = np.argmax(y_score, axis=1)
+    metrics = {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "macro_f1": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+    }
+    k = min(3, len(labels))
+    if k >= 2:
+        metrics[f"top{k}_accuracy"] = float(top_k_accuracy_score(y_true, y_score, k=k, labels=np.arange(len(labels))))
+    return metrics
 
 
 def save_pickle(obj, path: Path):
@@ -162,25 +130,22 @@ def save_json(obj, path: Path):
 
 def save_feature_importance(model_pipeline, feature_columns, output_path: Path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     model = model_pipeline.named_steps["model"]
     if hasattr(model, "coef_"):
-        values = np.abs(model.coef_).reshape(-1)
-        df = pd.DataFrame({"feature": feature_columns, "importance": values})
+        values = np.mean(np.abs(model.coef_), axis=0)
     elif hasattr(model, "feature_importances_"):
         values = model.feature_importances_
-        df = pd.DataFrame({"feature": feature_columns, "importance": values})
     else:
-        df = pd.DataFrame({"feature": feature_columns, "importance": np.nan})
-
-    df = df.sort_values("importance", ascending=False, na_position="last")
-    df.to_csv(output_path, index=False)
+        values = np.full(len(feature_columns), np.nan)
+    out_df = pd.DataFrame({"feature": feature_columns, "importance": values})
+    out_df = out_df.sort_values("importance", ascending=False, na_position="last")
+    out_df.to_csv(output_path, index=False)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--features", required=True, type=str, help="Path to attack feature CSV")
-    parser.add_argument("--name", required=True, type=str, help="Experiment name, e.g. ucf_event")
+    parser.add_argument("--name", required=True, type=str, help="Experiment name, e.g. ucf_event_10crop")
     parser.add_argument("--test_size", default=0.2, type=float, help="Test split ratio")
     parser.add_argument("--val_size", default=0.2, type=float, help="Validation split ratio from train split")
     parser.add_argument("--seed", default=20260319, type=int, help="Random seed")
@@ -190,19 +155,22 @@ def main():
     feature_path = project_root / args.features
     df = load_feature_table(feature_path)
 
-    feature_columns = select_feature_columns(df)
+    df = df[df[MEMBERSHIP_COLUMN].astype(int) == 1].copy()
+    df = df[df[LABEL_COLUMN].astype(str).str.len() > 0].reset_index(drop=True)
     if GROUP_COLUMN not in df.columns:
         raise ValueError(f"Missing required group column: {GROUP_COLUMN}")
 
+    feature_columns = select_feature_columns(df)
     train_df, val_df, test_df = group_split(df, args.test_size, args.val_size, args.seed)
-    train_df = oversample_minority_train(train_df, args.seed)
+
+    label_encoder = LabelEncoder()
+    y_train = label_encoder.fit_transform(train_df[LABEL_COLUMN].astype(str))
+    y_val = label_encoder.transform(val_df[LABEL_COLUMN].astype(str))
+    y_test = label_encoder.transform(test_df[LABEL_COLUMN].astype(str))
 
     X_train = train_df[feature_columns]
-    y_train = train_df[LABEL_COLUMN].astype(int).to_numpy()
     X_val = val_df[feature_columns]
-    y_val = val_df[LABEL_COLUMN].astype(int).to_numpy()
     X_test = test_df[feature_columns]
-    y_test = test_df[LABEL_COLUMN].astype(int).to_numpy()
 
     results = {
         "name": args.name,
@@ -210,6 +178,8 @@ def main():
         "num_rows": int(len(df)),
         "num_features": int(len(feature_columns)),
         "group_column": GROUP_COLUMN,
+        "label_column": LABEL_COLUMN,
+        "labels": label_encoder.classes_.tolist(),
         "split_sizes": {
             "train": int(len(X_train)),
             "val": int(len(X_val)),
@@ -221,9 +191,9 @@ def main():
             "test": int(test_df[GROUP_COLUMN].nunique()),
         },
         "class_counts": {
-            "train": {str(k): int(v) for k, v in train_df[LABEL_COLUMN].value_counts().sort_index().to_dict().items()},
-            "val": {str(k): int(v) for k, v in val_df[LABEL_COLUMN].value_counts().sort_index().to_dict().items()},
-            "test": {str(k): int(v) for k, v in test_df[LABEL_COLUMN].value_counts().sort_index().to_dict().items()},
+            "train": {k: int(v) for k, v in train_df[LABEL_COLUMN].value_counts().sort_index().to_dict().items()},
+            "val": {k: int(v) for k, v in val_df[LABEL_COLUMN].value_counts().sort_index().to_dict().items()},
+            "test": {k: int(v) for k, v in test_df[LABEL_COLUMN].value_counts().sort_index().to_dict().items()},
         },
     }
 
@@ -236,25 +206,28 @@ def main():
     results_dir = project_root / "mia" / "results"
 
     for model_name, pipeline in model_specs.items():
-        print(f"Training {model_name} on {args.name}")
+        print(f"Training {model_name} for client attribution on {args.name}")
         pipeline.fit(X_train, y_train)
 
-        val_scores = pipeline.predict_proba(X_val)[:, 1]
-        test_scores = pipeline.predict_proba(X_test)[:, 1]
+        val_scores = pipeline.predict_proba(X_val)
+        test_scores = pipeline.predict_proba(X_test)
 
         results[model_name] = {
-            "validation": evaluate_predictions(y_val, val_scores),
-            "test": evaluate_predictions(y_test, test_scores),
+            "validation": evaluate_multiclass(y_val, val_scores, label_encoder.classes_),
+            "test": evaluate_multiclass(y_test, test_scores, label_encoder.classes_),
         }
 
-        save_pickle(pipeline, models_dir / f"{args.name}_{model_name}.pkl")
+        save_pickle(
+            {"pipeline": pipeline, "label_encoder": label_encoder, "feature_columns": feature_columns},
+            models_dir / f"{args.name}_{model_name}_client_attribution.pkl",
+        )
         save_feature_importance(
             pipeline,
             feature_columns,
-            results_dir / f"{args.name}_{model_name}_feature_importance.csv",
+            results_dir / f"{args.name}_{model_name}_client_attribution_feature_importance.csv",
         )
 
-    save_json(results, results_dir / f"{args.name}_metrics.json")
+    save_json(results, results_dir / f"{args.name}_client_attribution_metrics.json")
     print(json.dumps(results, ensure_ascii=False, indent=2))
 
 
