@@ -42,6 +42,7 @@ class FedAvgClient:
         self.device = device
         self.use_dp = use_dp
         self.dp_clip_norm = dp_clip_norm
+        self.current_clip_norm = dp_clip_norm
         self.dp_noise_multiplier = dp_noise_multiplier
         self.dp_noise_mode = dp_noise_mode
         self.dp_seed = dp_seed
@@ -138,6 +139,9 @@ class FedAvgClient:
             "clip_coef": clip_coef,
             "noise_mode": self.dp_noise_mode,
         }
+
+    def set_clip_norm(self, clip_norm):
+        self.current_clip_norm = clip_norm
 
     def train(self):
         self.model.train()
@@ -254,7 +258,7 @@ class FedAvgClient:
                 model_update = self.get_model_update()
                 protected_update, dp_stats = self.apply_dp_to_update(
                     model_update,
-                    clip_norm=self.dp_clip_norm,
+                    clip_norm=self.current_clip_norm,
                     noise_multiplier=self.dp_noise_multiplier,
                 )
                 return (protected_update, loss_total2,
@@ -363,7 +367,7 @@ class FedAvgClient:
                 model_update = self.get_model_update()
                 protected_update, dp_stats = self.apply_dp_to_update(
                     model_update,
-                    clip_norm=self.dp_clip_norm,
+                    clip_norm=self.current_clip_norm,
                     noise_multiplier=self.dp_noise_multiplier,
                 )
                 return (protected_update, loss_total2,

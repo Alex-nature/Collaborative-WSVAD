@@ -43,6 +43,12 @@ parser.add_argument('--dp_noise_mode', default='local', choices=['local', 'centr
 parser.add_argument('--dp_delta', default=1e-5, type=float, help="target delta for privacy accounting")
 parser.add_argument('--dp_seed', default=20260326, type=int, help="random seed used for DP noise generation")
 parser.add_argument('--dp_log_norm_stats', action='store_true', help="log per-round DP update norm statistics")
+parser.add_argument('--use_adaptive_clip', action='store_true', help="enable adaptive clipping for DP-FedAvg")
+parser.add_argument('--adaptive_clip_quantile', default=0.6, type=float, help="target quantile of client raw update norms for adaptive clipping")
+parser.add_argument('--adaptive_clip_beta', default=0.1, type=float, help="EMA coefficient for adaptive clipping")
+parser.add_argument('--adaptive_clip_warmup_rounds', default=3, type=int, help="number of warmup rounds before adaptive clipping updates")
+parser.add_argument('--adaptive_clip_min_norm', default=1.0, type=float, help="minimum clipping norm for adaptive clipping")
+parser.add_argument('--adaptive_clip_max_norm', default=10.0, type=float, help="maximum clipping norm for adaptive clipping")
 
 # # Hierarchical Transformer parameters (1,长短期时间建模)
 # parser.add_argument('--local_layers', default=2, type=int, help="number of local attention layers")

@@ -83,7 +83,13 @@ if __name__ == "__main__":
                               dp_noise_mode=args.dp_noise_mode,
                               dp_delta=args.dp_delta,
                               dp_seed=args.dp_seed,
-                              dp_log_norm_stats=args.dp_log_norm_stats)
+                              dp_log_norm_stats=args.dp_log_norm_stats,
+                              use_adaptive_clip=args.use_adaptive_clip,
+                              adaptive_clip_quantile=args.adaptive_clip_quantile,
+                              adaptive_clip_beta=args.adaptive_clip_beta,
+                              adaptive_clip_warmup_rounds=args.adaptive_clip_warmup_rounds,
+                              adaptive_clip_min_norm=args.adaptive_clip_min_norm,
+                              adaptive_clip_max_norm=args.adaptive_clip_max_norm)
         best_score = server.train(path)
         
         # 确保best_score是有效的数值

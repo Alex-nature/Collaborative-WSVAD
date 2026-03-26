@@ -48,7 +48,13 @@ class FedAvgServer(BaseServer):
                  dp_noise_mode: str = "local",
                  dp_delta: float = 1e-5,
                  dp_seed: int = 20260326,
-                 dp_log_norm_stats: bool = False
+                 dp_log_norm_stats: bool = False,
+                 use_adaptive_clip: bool = False,
+                 adaptive_clip_quantile: float = 0.6,
+                 adaptive_clip_beta: float = 0.1,
+                 adaptive_clip_warmup_rounds: int = 3,
+                 adaptive_clip_min_norm: float = 1.0,
+                 adaptive_clip_max_norm: float = 10.0
                  ):
         super().__init__(dataset, train_loaders, test_loader,
                          clients_num, global_rounds, local_epochs, model)
@@ -70,6 +76,13 @@ class FedAvgServer(BaseServer):
         self.dp_delta = dp_delta
         self.dp_seed = dp_seed
         self.dp_log_norm_stats = dp_log_norm_stats
+        self.use_adaptive_clip = use_adaptive_clip
+        self.adaptive_clip_quantile = adaptive_clip_quantile
+        self.adaptive_clip_beta = adaptive_clip_beta
+        self.adaptive_clip_warmup_rounds = adaptive_clip_warmup_rounds
+        self.adaptive_clip_min_norm = adaptive_clip_min_norm
+        self.adaptive_clip_max_norm = adaptive_clip_max_norm
+        self.current_clip_norm = dp_clip_norm
         self.dp_generator = torch.Generator(device='cpu')
         self.dp_generator.manual_seed(self.dp_seed)
 
@@ -97,6 +110,8 @@ class FedAvgServer(BaseServer):
             self.clients.append(client)
 
         self.global_parameter = self.get_trainable_parameters()
+        for client in self.clients:
+            client.set_clip_norm(self.current_clip_norm)
         self.send_global_parameter(self.global_parameter)
 
     @staticmethod
@@ -224,6 +239,7 @@ class FedAvgServer(BaseServer):
             self.local_losses.clear()
             self.len_dataset.clear()
             local_dp_stats = []
+            raw_norms = []
 
             i = 0
             for client in self.clients:
@@ -232,6 +248,7 @@ class FedAvgServer(BaseServer):
                 w, loss, l_data, dp_stats = client.train()
                 if self.use_dp and dp_stats is not None:
                     local_dp_stats.append(dp_stats)
+                    raw_norms.append(dp_stats["raw_update_norm"])
 
                 self.local_weights.append(w)
                 self.local_losses.append(loss)
@@ -254,10 +271,32 @@ class FedAvgServer(BaseServer):
                         f"clipped_norm={avg_clipped_norm:.6f}, "
                         f"clip_coef={avg_clip_coef:.6f}"
                     )
+                    if self.use_adaptive_clip and raw_norms:
+                        current_quantile = float(np.quantile(raw_norms, self.adaptive_clip_quantile))
+                        print(
+                            f"Adaptive clip round {g + 1}: "
+                            f"current_clip_norm={self.current_clip_norm:.6f}, "
+                            f"target_quantile={current_quantile:.6f}"
+                        )
             else:
                 self.global_parameter = self.aggregate_parameters()
             self.set_global_parameter(self.global_parameter)
             res = self.evaluate(g)
+
+            if self.use_dp and self.use_adaptive_clip and raw_norms and (g + 1) >= self.adaptive_clip_warmup_rounds:
+                target_quantile = float(np.quantile(raw_norms, self.adaptive_clip_quantile))
+                updated_clip_norm = (
+                    (1.0 - self.adaptive_clip_beta) * self.current_clip_norm
+                    + self.adaptive_clip_beta * target_quantile
+                )
+                updated_clip_norm = min(max(updated_clip_norm, self.adaptive_clip_min_norm), self.adaptive_clip_max_norm)
+                print(
+                    f"Adaptive clip update round {g + 1}: "
+                    f"{self.current_clip_norm:.6f} -> {updated_clip_norm:.6f}"
+                )
+                self.current_clip_norm = updated_clip_norm
+                for client in self.clients:
+                    client.set_clip_norm(self.current_clip_norm)
 
             self.send_global_parameter(self.global_parameter)
             metric_name = 'roc' if self.dataset == 'ucf' else 'ap'
