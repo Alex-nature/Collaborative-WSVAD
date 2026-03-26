@@ -49,8 +49,6 @@ class FedAvgClient:
         self.scheduler = MultiStepLR(
             self.optimizer, scheduler_milestones, scheduler_rate)
         self.global_parameters_snapshot = None
-        self.dp_generator = torch.Generator(device='cpu')
-        self.dp_generator.manual_seed(self.dp_seed)
 
     @staticmethod
     def clone_parameter_dict(parameter_dict):
@@ -101,9 +99,13 @@ class FedAvgClient:
         return scaled
 
     @staticmethod
-    def add_gaussian_noise(parameter_dict, std, generator=None):
+    def add_gaussian_noise(parameter_dict, std, seed=None):
         noised = OrderedDict()
-        for name, value in parameter_dict.items():
+        for idx, (name, value) in enumerate(parameter_dict.items()):
+            generator = None
+            if seed is not None:
+                generator = torch.Generator(device=value.device)
+                generator.manual_seed(seed + idx)
             noise = torch.randn(
                 value.shape,
                 generator=generator,
@@ -123,7 +125,7 @@ class FedAvgClient:
             noised_update = self.add_gaussian_noise(
                 clipped_update,
                 std=noise_multiplier * clip_norm,
-                generator=generator,
+                seed=self.dp_seed,
             )
         else:
             noised_update = self.clone_parameter_dict(clipped_update)
