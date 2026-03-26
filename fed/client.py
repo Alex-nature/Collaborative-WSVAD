@@ -253,7 +253,6 @@ class FedAvgClient:
                     model_update,
                     clip_norm=self.dp_clip_norm,
                     noise_multiplier=self.dp_noise_multiplier,
-                    generator=self.dp_generator,
                 )
                 return (protected_update, loss_total2,
                         len(self.train_loaders[0]) + len(self.train_loaders[1]), dp_stats)
@@ -363,7 +362,6 @@ class FedAvgClient:
                     model_update,
                     clip_norm=self.dp_clip_norm,
                     noise_multiplier=self.dp_noise_multiplier,
-                    generator=self.dp_generator,
                 )
                 return (protected_update, loss_total2,
                         len(self.train_loaders), dp_stats)
