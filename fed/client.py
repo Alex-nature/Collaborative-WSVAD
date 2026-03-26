@@ -220,7 +220,7 @@ class FedAvgClient:
                     loss_neg = NEG_LOSS_BCE(logits_pos, logits_neg, text_labels, feat_lengths, self.device)
                     # 文本特征正则化 (优化版：使用平滑激活函数和温度参数)
                     loss_text_reg = text_branch_regularization(text_features_pos, text_features_neg,
-                                                             reg_lambda=0.1, temperature=0.1)
+                                                             reg_lambda=1.0, temperature=0.1)
 
                     loss = loss_ce + loss_neg + loss_text_reg
 
