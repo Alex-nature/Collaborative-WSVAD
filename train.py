@@ -76,7 +76,13 @@ if __name__ == "__main__":
         server = FedAvgServer(args.dataset, train_loaders, test_loader, args.clients_num,
                               args.global_rounds, args.local_epochs, args.learning_rate,
                               args.split_mode, args.scheduler_milestones, args.scheduler_rate,
-                              device, model)
+                              device, model,
+                              use_dp=args.use_dp,
+                              dp_clip_norm=args.dp_clip_norm,
+                              dp_noise_multiplier=args.dp_noise_multiplier,
+                              dp_delta=args.dp_delta,
+                              dp_seed=args.dp_seed,
+                              dp_log_norm_stats=args.dp_log_norm_stats)
         best_score = server.train(path)
         
         # 确保best_score是有效的数值
@@ -113,6 +119,10 @@ if __name__ == "__main__":
             'best_score': best_score,
             'dataset': args.dataset,
             'split_mode': args.split_mode,
+            'use_dp': args.use_dp,
+            'dp_clip_norm': args.dp_clip_norm,
+            'dp_noise_multiplier': args.dp_noise_multiplier,
+            'dp_delta': args.dp_delta,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         with open(os.path.join(path, 'final_result.json'), 'w') as f:

@@ -35,6 +35,14 @@ parser.add_argument('--tca_gamma', default=0.6, type=float, help="gamma paramete
 parser.add_argument('--tca_bias', default=0.2, type=float, help="bias parameter for distance adjacency in TCA")
 parser.add_argument('--tca_norm', default=True, type=bool, help="whether to use normalization in TCA")
 
+# Client-level DP-FedAvg parameters
+parser.add_argument('--use_dp', action='store_true', help="enable client-level DP-FedAvg")
+parser.add_argument('--dp_clip_norm', default=1.0, type=float, help="global L2 clipping norm for client updates")
+parser.add_argument('--dp_noise_multiplier', default=0.0, type=float, help="noise multiplier for Gaussian noise on clipped client updates")
+parser.add_argument('--dp_delta', default=1e-5, type=float, help="target delta for privacy accounting")
+parser.add_argument('--dp_seed', default=20260326, type=int, help="random seed used for DP noise generation")
+parser.add_argument('--dp_log_norm_stats', action='store_true', help="log per-round DP update norm statistics")
+
 # # Hierarchical Transformer parameters (1,长短期时间建模)
 # parser.add_argument('--local_layers', default=2, type=int, help="number of local attention layers")
 # parser.add_argument('--global_layers', default=2, type=int, help="number of global attention layers")

@@ -41,7 +41,13 @@ class FedAvgServer(BaseServer):
                  scheduler_milestones,
                  scheduler_rate,
                  device,
-                 model
+                 model,
+                 use_dp: bool = False,
+                 dp_clip_norm: float = 1.0,
+                 dp_noise_multiplier: float = 0.0,
+                 dp_delta: float = 1e-5,
+                 dp_seed: int = 20260326,
+                 dp_log_norm_stats: bool = False
                  ):
         super().__init__(dataset, train_loaders, test_loader,
                          clients_num, global_rounds, local_epochs, model)
@@ -56,6 +62,14 @@ class FedAvgServer(BaseServer):
         self.best = 0
         self.best_model = None
         self.device = device
+        self.use_dp = use_dp
+        self.dp_clip_norm = dp_clip_norm
+        self.dp_noise_multiplier = dp_noise_multiplier
+        self.dp_delta = dp_delta
+        self.dp_seed = dp_seed
+        self.dp_log_norm_stats = dp_log_norm_stats
+        self.dp_generator = torch.Generator(device='cpu')
+        self.dp_generator.manual_seed(self.dp_seed)
 
         if self.dataset == 'ucf':
             label_map = dict(
@@ -71,15 +85,60 @@ class FedAvgServer(BaseServer):
 
             client = FedAvgClient(model, learning_rate, train_loaders[i], dataset,
                                   local_epochs, label_map, scheduler_milestones,
-                                  scheduler_rate, device)
+                                  scheduler_rate, device,
+                                  use_dp=use_dp,
+                                  dp_clip_norm=dp_clip_norm,
+                                  dp_noise_multiplier=dp_noise_multiplier,
+                                  dp_seed=dp_seed)
 
             self.clients.append(client)
+
+        self.global_parameter = self.get_trainable_parameters()
+        self.send_global_parameter(self.global_parameter)
+
+    @staticmethod
+    def clone_parameter_dict(parameter_dict):
+        cloned = OrderedDict()
+        for name, value in parameter_dict.items():
+            cloned[name] = value.data.clone()
+        return cloned
+
+    @staticmethod
+    def zero_like_parameter_dict(parameter_dict):
+        zeros = OrderedDict()
+        for name, value in parameter_dict.items():
+            zeros[name] = torch.zeros_like(value)
+        return zeros
+
+    @staticmethod
+    def add_parameter_dict(base_dict, delta_dict):
+        output = OrderedDict()
+        for name in base_dict.keys():
+            output[name] = base_dict[name].data.clone() + delta_dict[name].data.clone()
+        return output
+
+    def get_trainable_parameters(self):
+        trainable_parameters = OrderedDict()
+        for name, p in self.model.named_parameters():
+            if p.requires_grad:
+                trainable_parameters[name] = p.data.clone()
+        return trainable_parameters
 
     def aggregate_parameters(self):
         temp_dict = OrderedDict()
         total_num = sum(self.len_dataset)
         for key, value in self.local_weights[0].items():
             temp_dict[key] = torch.zeros_like(value)
+
+        for i in range(len(self.local_weights)):
+            for key, value in self.local_weights[i].items():
+                temp_dict[key] += value * self.len_dataset[i] / total_num
+
+        return temp_dict
+
+    def aggregate_updates(self):
+        total_num = sum(self.len_dataset)
+        temp_dict = self.zero_like_parameter_dict(self.local_weights[0])
 
         for i in range(len(self.local_weights)):
             for key, value in self.local_weights[i].items():
@@ -143,12 +202,15 @@ class FedAvgServer(BaseServer):
             self.local_weights.clear()
             self.local_losses.clear()
             self.len_dataset.clear()
+            local_dp_stats = []
 
             i = 0
             for client in self.clients:
                 i += 1
                 print(f"round {g + 1}, client: {i}")
-                w, loss, l_data = client.train()
+                w, loss, l_data, dp_stats = client.train()
+                if self.use_dp and dp_stats is not None:
+                    local_dp_stats.append(dp_stats)
 
                 self.local_weights.append(w)
                 self.local_losses.append(loss)
@@ -156,7 +218,21 @@ class FedAvgServer(BaseServer):
                 client.scheduler.step()
                 print()  # 每个客户端训练完成后添加空行
 
-            self.global_parameter = self.aggregate_parameters()
+            if self.use_dp:
+                aggregated_update = self.aggregate_updates()
+                self.global_parameter = self.add_parameter_dict(self.global_parameter, aggregated_update)
+                if self.dp_log_norm_stats and local_dp_stats:
+                    avg_raw_norm = sum(item["raw_update_norm"] for item in local_dp_stats) / len(local_dp_stats)
+                    avg_clipped_norm = sum(item["clipped_update_norm"] for item in local_dp_stats) / len(local_dp_stats)
+                    avg_clip_coef = sum(item["clip_coef"] for item in local_dp_stats) / len(local_dp_stats)
+                    print(
+                        f"DP stats round {g + 1}: "
+                        f"raw_norm={avg_raw_norm:.6f}, "
+                        f"clipped_norm={avg_clipped_norm:.6f}, "
+                        f"clip_coef={avg_clip_coef:.6f}"
+                    )
+            else:
+                self.global_parameter = self.aggregate_parameters()
             self.set_global_parameter(self.global_parameter)
             res = self.evaluate(g)
 
