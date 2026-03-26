@@ -45,6 +45,7 @@ class FedAvgServer(BaseServer):
                  use_dp: bool = False,
                  dp_clip_norm: float = 1.0,
                  dp_noise_multiplier: float = 0.0,
+                 dp_noise_mode: str = "local",
                  dp_delta: float = 1e-5,
                  dp_seed: int = 20260326,
                  dp_log_norm_stats: bool = False
@@ -65,6 +66,7 @@ class FedAvgServer(BaseServer):
         self.use_dp = use_dp
         self.dp_clip_norm = dp_clip_norm
         self.dp_noise_multiplier = dp_noise_multiplier
+        self.dp_noise_mode = dp_noise_mode
         self.dp_delta = dp_delta
         self.dp_seed = dp_seed
         self.dp_log_norm_stats = dp_log_norm_stats
@@ -89,6 +91,7 @@ class FedAvgServer(BaseServer):
                                   use_dp=use_dp,
                                   dp_clip_norm=dp_clip_norm,
                                   dp_noise_multiplier=dp_noise_multiplier,
+                                  dp_noise_mode=dp_noise_mode,
                                   dp_seed=dp_seed)
 
             self.clients.append(client)
@@ -145,6 +148,24 @@ class FedAvgServer(BaseServer):
                 temp_dict[key] += value * self.len_dataset[i] / total_num
 
         return temp_dict
+
+    def add_noise_to_aggregated_update(self, update_dict):
+        if self.dp_noise_multiplier <= 0:
+            return self.clone_parameter_dict(update_dict)
+
+        noised = OrderedDict()
+        std = self.dp_noise_multiplier * self.dp_clip_norm
+        for idx, (name, value) in enumerate(update_dict.items()):
+            generator = torch.Generator(device=value.device)
+            generator.manual_seed(self.dp_seed + idx)
+            noise = torch.randn(
+                value.shape,
+                generator=generator,
+                device=value.device,
+                dtype=torch.float32,
+            ).to(value.dtype) * std
+            noised[name] = value.data.clone() + noise
+        return noised
 
     def set_global_parameter(self, para):
         state_dict = self.model.state_dict()
@@ -220,6 +241,8 @@ class FedAvgServer(BaseServer):
 
             if self.use_dp:
                 aggregated_update = self.aggregate_updates()
+                if self.dp_noise_mode == "central":
+                    aggregated_update = self.add_noise_to_aggregated_update(aggregated_update)
                 self.global_parameter = self.add_parameter_dict(self.global_parameter, aggregated_update)
                 if self.dp_log_norm_stats and local_dp_stats:
                     avg_raw_norm = sum(item["raw_update_norm"] for item in local_dp_stats) / len(local_dp_stats)

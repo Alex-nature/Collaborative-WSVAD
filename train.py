@@ -80,6 +80,7 @@ if __name__ == "__main__":
                               use_dp=args.use_dp,
                               dp_clip_norm=args.dp_clip_norm,
                               dp_noise_multiplier=args.dp_noise_multiplier,
+                              dp_noise_mode=args.dp_noise_mode,
                               dp_delta=args.dp_delta,
                               dp_seed=args.dp_seed,
                               dp_log_norm_stats=args.dp_log_norm_stats)

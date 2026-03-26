@@ -29,6 +29,7 @@ class FedAvgClient:
                  use_dp: bool = False,
                  dp_clip_norm: float = 1.0,
                  dp_noise_multiplier: float = 0.0,
+                 dp_noise_mode: str = "local",
                  dp_seed: int = 20260326,
                  ):
         super().__init__()
@@ -42,6 +43,7 @@ class FedAvgClient:
         self.use_dp = use_dp
         self.dp_clip_norm = dp_clip_norm
         self.dp_noise_multiplier = dp_noise_multiplier
+        self.dp_noise_mode = dp_noise_mode
         self.dp_seed = dp_seed
 
         self.optimizer = torch.optim.AdamW(
@@ -121,7 +123,7 @@ class FedAvgClient:
         clipped_update = self.scale_parameter_dict(model_update, clip_coef)
         clipped_norm = self.parameter_dict_l2_norm(clipped_update)
 
-        if noise_multiplier > 0:
+        if self.dp_noise_mode == "local" and noise_multiplier > 0:
             noised_update = self.add_gaussian_noise(
                 clipped_update,
                 std=noise_multiplier * clip_norm,
@@ -134,6 +136,7 @@ class FedAvgClient:
             "raw_update_norm": raw_norm,
             "clipped_update_norm": clipped_norm,
             "clip_coef": clip_coef,
+            "noise_mode": self.dp_noise_mode,
         }
 
     def train(self):
