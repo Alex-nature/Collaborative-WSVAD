@@ -28,6 +28,7 @@ class FedAvgClient:
                  device: str,
                  use_dp: bool = False,
                  dp_clip_norm: float = 1.0,
+                 disable_dp_clipping: bool = False,
                  dp_noise_multiplier: float = 0.0,
                  dp_noise_mode: str = "local",
                  dp_seed: int = 20260326,
@@ -42,6 +43,7 @@ class FedAvgClient:
         self.device = device
         self.use_dp = use_dp
         self.dp_clip_norm = dp_clip_norm
+        self.disable_dp_clipping = disable_dp_clipping
         self.current_clip_norm = dp_clip_norm
         self.dp_noise_multiplier = dp_noise_multiplier
         self.dp_noise_mode = dp_noise_mode
@@ -120,8 +122,12 @@ class FedAvgClient:
 
     def apply_dp_to_update(self, model_update, clip_norm, noise_multiplier, generator=None):
         raw_norm = self.parameter_dict_l2_norm(model_update)
-        clip_coef = min(1.0, clip_norm / (raw_norm + 1e-12))
-        clipped_update = self.scale_parameter_dict(model_update, clip_coef)
+        if self.disable_dp_clipping:
+            clip_coef = 1.0
+            clipped_update = self.clone_parameter_dict(model_update)
+        else:
+            clip_coef = min(1.0, clip_norm / (raw_norm + 1e-12))
+            clipped_update = self.scale_parameter_dict(model_update, clip_coef)
         clipped_norm = self.parameter_dict_l2_norm(clipped_update)
 
         if self.dp_noise_mode == "local" and noise_multiplier > 0:

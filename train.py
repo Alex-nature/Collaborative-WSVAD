@@ -79,6 +79,7 @@ if __name__ == "__main__":
                               device, model,
                               use_dp=args.use_dp,
                               dp_clip_norm=args.dp_clip_norm,
+                              disable_dp_clipping=args.disable_dp_clipping,
                               dp_noise_multiplier=args.dp_noise_multiplier,
                               dp_noise_mode=args.dp_noise_mode,
                               dp_delta=args.dp_delta,

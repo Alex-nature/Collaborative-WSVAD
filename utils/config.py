@@ -38,6 +38,7 @@ parser.add_argument('--tca_norm', default=True, type=bool, help="whether to use 
 # Client-level DP-FedAvg parameters
 parser.add_argument('--use_dp', action='store_true', help="enable client-level DP-FedAvg")
 parser.add_argument('--dp_clip_norm', default=1.0, type=float, help="global L2 clipping norm for client updates")
+parser.add_argument('--disable_dp_clipping', action='store_true', help="disable clipping and use raw client updates in DP-related paths")
 parser.add_argument('--dp_noise_multiplier', default=0.0, type=float, help="noise multiplier for Gaussian noise on clipped client updates")
 parser.add_argument('--dp_noise_mode', default='local', choices=['local', 'central'], help="noise injection mode for DP-FedAvg")
 parser.add_argument('--dp_delta', default=1e-5, type=float, help="target delta for privacy accounting")

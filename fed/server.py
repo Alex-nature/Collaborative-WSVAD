@@ -44,6 +44,7 @@ class FedAvgServer(BaseServer):
                  model,
                  use_dp: bool = False,
                  dp_clip_norm: float = 1.0,
+                 disable_dp_clipping: bool = False,
                  dp_noise_multiplier: float = 0.0,
                  dp_noise_mode: str = "local",
                  dp_delta: float = 1e-5,
@@ -71,6 +72,7 @@ class FedAvgServer(BaseServer):
         self.device = device
         self.use_dp = use_dp
         self.dp_clip_norm = dp_clip_norm
+        self.disable_dp_clipping = disable_dp_clipping
         self.dp_noise_multiplier = dp_noise_multiplier
         self.dp_noise_mode = dp_noise_mode
         self.dp_delta = dp_delta
@@ -103,6 +105,7 @@ class FedAvgServer(BaseServer):
                                   scheduler_rate, device,
                                   use_dp=use_dp,
                                   dp_clip_norm=dp_clip_norm,
+                                  disable_dp_clipping=disable_dp_clipping,
                                   dp_noise_multiplier=dp_noise_multiplier,
                                   dp_noise_mode=dp_noise_mode,
                                   dp_seed=dp_seed)
